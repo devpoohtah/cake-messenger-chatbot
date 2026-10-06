@@ -13,6 +13,7 @@ from typing import Any
 from app.schemas.order import _PHONE_RE, OrderRequest
 from app.services import order_service as orders
 from app.services.ai_service import AIResult, AIService, Intent
+from app.services.faq import FAQS
 from app.services.messages import t
 
 logger = logging.getLogger("uvicorn.error")
@@ -26,7 +27,16 @@ NO_WORDS = {"no", "hindi"}  # cancel only while waiting for confirmation
 CONFIRM_WORDS = {"yes", "y", "confirm", "confirmed", "ok", "okay", "oo", "sige"}
 MORE_WORDS = {"yes", "y", "another", "add", "more", "add another", "oo"}
 DONE_WORDS = {"done", "thats all", "that is all", "no", "nope", "none", "enough", "wala na", "tapos na", "ok", "okay"}
-QUESTION_INTENTS = {Intent.GREETING, Intent.PRODUCT_QUESTION, Intent.PRICE_QUESTION, Intent.ORDERING_INFO}
+THANKS_WORDS: dict[str, str | None] = {  # exact message -> language it implies (None = ambiguous)
+    "thanks": "en", "thank you": "en", "thankyou": "en", "thank u": "en", "ty": "en", "tysm": "en",
+    "thanks a lot": "en", "bye": "en", "goodbye": "en",
+    "salamat": None, "salamat po": "tl", "maraming salamat": "tl", "maraming salamat po": "tl",
+    "daghang salamat": "hil", "daghan salamat": "hil", "salamat gid": "hil",
+}
+LANGUAGES = {"en", "tl", "hil"}
+QUESTION_INTENTS = {
+    Intent.GREETING, Intent.PRODUCT_QUESTION, Intent.PRICE_QUESTION, Intent.ORDERING_INFO, Intent.FAQ_QUESTION,
+}
 CONTACT_FIELDS = ("customer_name", "contact_number", "location")
 
 
@@ -48,6 +58,9 @@ def _peso(value: Any) -> str:
 def _norm(text: str) -> str:
     return re.sub(r"[^\w\s]", "", text).strip().lower()
 
+def _plain(replies: list[Reply]) -> list[Reply]:
+    """Drop buttons from side-answers given in the middle of an order."""
+    return [replace(r, options=[]) for r in replies]
 
 def _new_draft(lang: str = "en") -> dict[str, Any]:
     return {"cart": [], "lang": lang}
@@ -105,7 +118,7 @@ class ConversationService:
     def __init__(self, ai: AIService, client: Any) -> None:
         self._ai = ai
         self._client = client
-
+        self._text = ""
     # ---------- storage ----------
     def _load(self, messenger_id: str) -> tuple[str, dict[str, Any]]:
         rows = (
@@ -144,6 +157,7 @@ class ConversationService:
     def _process(self, sender_id: str, text: str, payload: str | None, state: str, draft: dict[str, Any]):
         products = self._products()
         available = [p for p in products if p.get("is_available")]
+        self._text = text
         lang = draft.get("lang", "en")
         words = _norm(text)
 
@@ -159,6 +173,9 @@ class ConversationService:
                 return self._place_order(sender_id, draft, products)
             if words in NO_WORDS:
                 return self._cancelled(lang)
+        if words in THANKS_WORDS:  # fixed reply, no AI call
+            draft = {**draft, "lang": THANKS_WORDS[words] or lang}
+            return self._thanks(state, draft, products, available)
         if state == COLLECTING and draft.get("asking") == "add_more":
             if words in MORE_WORDS:
                 return self._advance({**draft, "cart_done": False, "pending": None, "force_product": True}, products, available)
@@ -169,8 +186,14 @@ class ConversationService:
         if state == COLLECTING and draft.get("asking") == "contact_number" and _PHONE_RE.match(text.strip()):
             return self._advance({**draft, "contact_number": text.strip()}, products, available)
 
-        result = self._ai.interpret_message(text, state, [p["name"] for p in available])
+        topics = {topic: row["description"] for topic, row in FAQS.items()}
+        result = self._ai.interpret_message(text, state, [p["name"] for p in available], topics)
 
+        if result.language in LANGUAGES:
+            lang = result.language
+            draft = {**draft, "lang": lang}
+        if result.intent == Intent.THANKS:
+            return self._thanks(state, draft, products, available)
         if state != IDLE and result.intent == Intent.CANCEL_ORDER:
             return self._cancelled(lang)
         if state == AWAITING and result.intent == Intent.CONFIRM_ORDER:
@@ -190,14 +213,30 @@ class ConversationService:
             if fields or wants_order:
                 return self._advance(self._merge(draft, fields), products, available, notice)
             nxt = self._advance(draft, products, available)
-            return self._answer(result, draft, products, available) + nxt[0], COLLECTING, nxt[2]
+            return _plain(self._answer(result, draft, products, available)) + nxt[0], COLLECTING, nxt[2]
 
         # AWAITING confirmation
         if any(k in fields for k in CONTACT_FIELDS):
             return self._advance(self._merge(draft, fields), products, available, notice)
         if result.intent in QUESTION_INTENTS:
-            return self._answer(result, draft, products, available) + self._summary(draft, products, available)[0], AWAITING, draft
+            answer = _plain(self._answer(result, draft, products, available))
+            return answer + self._summary(draft, products, available)[0], AWAITING, draft
         return [self._confirm_prompt(lang, "awaiting_hint")], AWAITING, draft
+
+    def _thanks(self, state: str, draft: dict[str, Any], products, available):
+        lang = draft.get("lang", "en")
+        reply = [Reply(text=t(lang, "thanks"))]
+        if state == COLLECTING:  # keep the order moving: repeat the question we were on
+            nxt = self._advance(draft, products, available)
+            return reply + nxt[0], COLLECTING, nxt[2]
+        if state == AWAITING:
+            return reply + self._summary(draft, products, available)[0], AWAITING, draft
+        return reply, state, draft
+
+    def _log_unanswered(self) -> None:
+        """Print questions the bot could not answer, so you know which FAQs to write."""
+        if self._text.strip():
+            logger.warning("Unanswered question: %r", self._text[:300])
 
     def _merge(self, draft: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
         """Apply validated fields from typed text to the draft."""
@@ -300,6 +339,14 @@ class ConversationService:
             return [Reply(text=text, options=[(t(lang, "btn_order_this"), f"ORDER:{product['product_id']}"), (t(lang, "btn_menu"), "MENU")])]
         if result.intent == Intent.ORDERING_INFO:
             return [Reply(text=t(lang, "ordering_info"), options=self._start_options(lang))]
+        if result.intent == Intent.FAQ_QUESTION:
+            row = FAQS.get(result.faq_topic or "")
+            answer = row and (row.get(lang) or row["en"])
+            if answer:  # the answer is text YOU wrote in faq.py, never AI-generated
+                return [Reply(text=answer, options=self._start_options(lang))]
+            self._log_unanswered()
+            return [Reply(text=t(lang, "faq_unknown"), options=self._start_options(lang))]
+        self._log_unanswered()
         return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))]
 
     def _cart_text(self, cart: list[dict[str, Any]], products) -> str:

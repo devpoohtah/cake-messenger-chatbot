@@ -39,6 +39,17 @@ MESSAGES: dict[str, dict[str, str]] = {
         "order_rejected": "Sorry, I couldn't place that order. Let's start again.",
         "invalid_order": "Sorry, something in that order isn't valid. Let's start again.",
         "error": "Sorry, something went wrong on our side. Please try again in a moment.",
+        "thanks": "You're welcome! 😊",
+        "faq_unknown": "Sorry, I don't have that information yet. I can help with our cakes, prices and orders.",
+    },
+    # Step 3 will translate the rest of the messages. Missing keys fall back to English.
+    "tl": {
+        "thanks": "Walang anuman po! 😊",
+        "faq_unknown": "Pasensya na po, wala pa po akong impormasyon tungkol diyan. Matutulungan ko po kayo sa aming mga cake, presyo at order.",
+    },
+    "hil": {
+        "thanks": "Wala sing anuman! 😊",
+        "faq_unknown": "Pasensya na, wala pa ko sing impormasyon sa to. Makabulig ako sa amon mga cake, presyo kag order.",
     },
 }
 
