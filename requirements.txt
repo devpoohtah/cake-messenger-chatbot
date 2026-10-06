@@ -1,0 +1,15 @@
+fastapi>=0.115
+uvicorn[standard]>=0.30
+pydantic>=2.7
+pydantic-settings>=2.3
+supabase>=2.5
+
+# testing
+pytest>=8.0
+httpx>=0.27
+
+
+
+ngrok
+logging
+google-genai
