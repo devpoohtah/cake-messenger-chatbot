@@ -2,6 +2,7 @@
 import re
 from datetime import datetime
 from decimal import Decimal
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -30,7 +31,17 @@ class OrderRequest(BaseModel):
     messenger_id: str | None = None
     location: str
     items: list[OrderItemIn] = Field(min_length=1)
+    fulfillment: Literal["delivery", "pickup"] = "delivery"
+    notes: str | None = None
     confirmed: bool = False
+
+    @field_validator("notes")
+    @classmethod
+    def _clean_notes(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if len(v) > 200:
+            raise ValueError("notes must be 200 characters or fewer")
+        return v or None
 
     @field_validator("customer_name", "location")
     @classmethod

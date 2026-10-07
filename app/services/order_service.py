@@ -12,8 +12,7 @@ from typing import Any
 from app.schemas.order import OrderCreated, OrderItemCreated, OrderRequest
 
 logger = logging.getLogger(__name__)
-
-MAX_QUANTITY_PER_ITEM = 50  # sanity cap; adjust as the business needs
+MAX_QUANTITY_PER_ITEM = 10  # per cake adjust to how many the shop can do
 _CENT = Decimal("0.01")
 
 
@@ -107,6 +106,29 @@ def _fetch_products(client: Any) -> list[dict[str, Any]]:
     # The catalog is tiny, so fetch it all and match names case-insensitively in Python.
     return client.table("products").select("*").execute().data or []
 
+def get_latest_order(client: Any, messenger_id: str) -> dict[str, Any] | None:
+    """The newest order of the customer with this Messenger ID, or None if there is none."""
+    customers = client.table("customers").select("customer_id").eq("messenger_id", messenger_id).limit(1).execute().data
+    if not customers:
+        return None
+    rows = (
+        client.table("orders")
+        .select("order_id, status, total_amount, order_items(quantity, products(name))")
+        .eq("customer_id", customers[0]["customer_id"])
+        .order("order_date", desc=True)
+        .limit(1)
+        .execute()
+        .data
+    )
+    if not rows:
+        return None
+    r = rows[0]
+    return {
+        "order_id": r["order_id"],
+        "status": r["status"],
+        "total_amount": Decimal(str(r["total_amount"])),
+        "items": [((i.get("products") or {}).get("name", "?"), i["quantity"]) for i in r.get("order_items") or []],
+    }
 
 def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreated:
     """Create an order. Refuses unless the customer explicitly confirmed."""
@@ -136,9 +158,16 @@ def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreat
         logger.exception("create_order_with_items RPC failed")
         raise OrderCreationError("Could not save the order.") from exc
 
-    data = response.data
-    if not data:
-        raise OrderCreationError("Order function returned no data.")
+
+    # Delivery/pick-up and notes are saved right after the order. If this fails (for example the
+    # columns were not added yet), the order itself is already saved, so only log it.
+    try:
+        extra: dict[str, Any] = {"fulfillment": request.fulfillment}
+        if request.notes:
+            extra["notes"] = request.notes
+        client.table("orders").update(extra).eq("order_id", data["order_id"]).execute()
+    except Exception:
+        logger.warning("Could not save fulfillment/notes for order %s", data.get("order_id"))   
 
     created = OrderCreated(
         **{**data, "items": [OrderItemCreated(**i) for i in data["items"]]}

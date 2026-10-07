@@ -25,7 +25,7 @@ class Settings(BaseSettings):
 
     gemini_api_key: SecretStr = SecretStr("")
     gemini_model: str = "gemini-3.1-flash-lite"
-    
+    admin_password: SecretStr = SecretStr("")  # owner dashboard login; empty = dashboard off
     enable_ngrok: bool = False
     ngrok_port: int = 8000
 

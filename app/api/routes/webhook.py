@@ -1,6 +1,6 @@
 """Webhook placeholders. No Meta behavior is implemented yet."""
 import logging
-from app.services.messenger_service import extract_text_messages
+from app.services.messenger_service import MessengerService, extract_text_messages
 from app.services.conversation_service import deliver_replies, handle_incoming_message
 import secrets
 from typing import Any
@@ -36,9 +36,13 @@ def verify_webhook(
 
 @router.post("/webhook")
 def receive_event(payload: dict[str, Any] = Body(default_factory=dict)):
+    messenger = MessengerService()
     for msg in extract_text_messages(payload):
         # DEV ONLY: remove the text from logs later, it is customer data.
         logger.info("Incoming from %s: text=%r payload=%r", msg.sender_id, msg.text, msg.payload)
+        messenger.send_action(msg.sender_id, "mark_seen")
+        if msg.payload is None:  # typed text may wait for the AI, so show "typing..."
+            messenger.send_action(msg.sender_id, "typing_on")
         replies = handle_incoming_message(msg.sender_id, msg.text, msg.message_id, msg.payload)
-        deliver_replies(msg.sender_id, replies)
+        deliver_replies(msg.sender_id, replies, messenger)
     return {"status": "received"}

@@ -2,7 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.api.routes import health, webhook
+from app.api.routes import admin, health, webhook
 from app.core.config import get_settings
 
 
@@ -30,3 +30,4 @@ app = FastAPI(title="Mrs Brave's Cake - AI Messenger Ordering", version="0.1.0",
 
 app.include_router(health.router)
 app.include_router(webhook.router)
+app.include_router(admin.router)

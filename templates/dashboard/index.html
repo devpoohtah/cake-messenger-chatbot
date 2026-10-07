@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mrs Brave's Cake – Admin</title>
+<style>
+:root{--bg:#faf7f5;--card:#fff;--text:#2b2220;--muted:#7a6e69;--line:#eadfd9;--accent:#c2410c;--ok:#15803d;--warn:#b45309;--bad:#b91c1c}
+@media (prefers-color-scheme:dark){:root{--bg:#1c1816;--card:#262120;--text:#f3ece8;--muted:#a89c96;--line:#3a3230;--accent:#fb923c;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+*{box-sizing:border-box}
+body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--text)}
+header{padding:16px 24px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{margin:0;font-size:18px}
+main{max-width:1100px;margin:0 auto;padding:20px 24px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.card b{display:block;font-size:24px}
+.card span{color:var(--muted);font-size:13px}
+nav{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+nav button{padding:8px 14px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
+nav button.on{background:var(--accent);border-color:var(--accent);color:#fff}
+nav button:disabled{opacity:.5;cursor:not-allowed}
+.wrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px}
+th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-size:12px;color:var(--muted);text-transform:uppercase}
+.tag{padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
+.pending{color:var(--warn)}.completed{color:var(--ok)}.cancelled{color:var(--bad)}
+select,input{font:inherit;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px}
+.hidden{display:none}
+.muted{color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<header><h1>Mrs Brave's Cake · Admin</h1></header>
+<main>
+  <div class="stats" id="stats"></div>
+  <p id="err" style="color:var(--bad)"></p>
+  <nav>
+    <button class="on" data-tab="orders">Orders</button>
+    <button data-tab="products">Products</button>
+    <button disabled title="Coming later">Delivery &amp; FAQ</button>
+  </nav>
+
+  <section id="orders">
+    <p><label>Show: <select id="filter">
+      <option value="all">All</option><option value="pending">Pending</option>
+      <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
+    </select></label> <button id="refresh" type="button">Refresh</button></p> 
+    <div class="wrap"><table>
+      <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes</th><th>Status</th></tr></thead>
+      <tbody id="orderRows"></tbody>
+    </table></div>
+  </section>
+
+  <section id="products" class="hidden">
+    <div class="wrap"><table>
+      <thead><tr><th>Cake</th><th>Price (₱)</th><th>Available</th></tr></thead>
+      <tbody id="productRows"></tbody>
+    </table></div>
+  </section>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));  // customer text is untrusted
+const peso = n => "₱" + Number(n).toLocaleString("en-PH", {minimumFractionDigits:2});
+
+let orders = [], products = [];
+
+async function api(path, options = {}) {
+  const res = await fetch("/admin/api/" + path, {headers: {"Content-Type": "application/json"}, ...options});
+  if (res.status === 401) throw new Error("Login expired. Reload the page and sign in again.");
+  if (!res.ok) throw new Error("Server error (" + res.status + "). Nothing was changed.");
+  return res.json();
+}
+function showError(e) { $("err").textContent = e ? e.message : ""; }
+
+async function load() {
+  try { [orders, products] = await Promise.all([api("orders"), api("products")]); }
+  catch (e) { showError(e); return; }
+  renderStats(); renderOrders(); renderProducts();
+}
+
+function renderStats() {
+  const count = s => orders.filter(o => o.status === s).length;
+  $("stats").innerHTML = [["Pending", count("pending")], ["Completed", count("completed")], ["Cancelled", count("cancelled")],
+    ["Sales (completed)", peso(orders.filter(o => o.status === "completed").reduce((t, o) => t + o.total, 0))]]
+    .map(([l, v]) => `<div class="card"><b>${v}</b><span>${l}</span></div>`).join("");
+}
+
+function renderOrders() {
+  const f = $("filter").value;
+  $("orderRows").innerHTML = orders.filter(o => f === "all" || o.status === f).map(o => `
+    <tr>
+      <td>${o.id}</td><td>${esc(o.date)}</td>
+      <td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td>
+      <td>${esc(o.items)}</td><td>${peso(o.total)}</td>
+      <td><span class="tag">${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span><br><span class="muted">${esc(o.where)}</span></td>
+      <td>${esc(o.notes) || '<span class="muted">–</span>'}</td>
+      <td><select onchange="setStatus(${o.id}, this.value)">
+        ${["pending", "completed", "cancelled"].map(s => `<option value="${s}" ${o.status === s ? "selected" : ""}>${s}</option>`).join("")}
+      </select></td>
+    </tr>`).join("") || '<tr><td colspan="8" class="muted">No orders.</td></tr>';
+}
+
+function renderProducts() {
+  $("productRows").innerHTML = products.map(p => `
+    <tr><td>${esc(p.name)}</td>
+      <td><input type="number" value="${p.price}" min="0" step="1" style="width:90px" onchange="setPrice(${p.id}, this.value)"></td>
+      <td><input type="checkbox" ${p.is_available ? "checked" : ""} onchange="setAvail(${p.id}, this.checked)"></td></tr>`).join("");
+}
+
+// Every change is saved on the server first, then the page reloads its data from the server,
+// so the screen never shows a change that did not actually save.
+async function save(path, body) {
+  showError(null);
+  let problem = null;
+  try { await api(path, {method: "PATCH", body: JSON.stringify(body)}); }
+  catch (e) { problem = e; }
+  await load();
+  if (problem) showError(problem);  // shown after the reload, which would otherwise hide it
+}
+function setStatus(id, status) { return save("orders/" + id, {status}); }
+function setAvail(id, on) { return save("products/" + id, {is_available: on}); }
+async function setPrice(id, value) {
+  const price = Number(value);
+  if (value === "" || !Number.isFinite(price) || price < 0) {
+    showError(null); await load(); showError(new Error("Enter a valid price."));
+    return;
+  }
+  return save("products/" + id, {price});
+}
+
+document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
+  $("orders").classList.toggle("hidden", b.dataset.tab !== "orders");
+  $("products").classList.toggle("hidden", b.dataset.tab !== "products");
+});
+$("filter").onchange = renderOrders;
+$("refresh").onclick = () => { showError(null); load(); };
+load();
+</script>
+</body>
+</html>

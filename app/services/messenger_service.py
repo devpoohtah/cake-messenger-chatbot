@@ -136,6 +136,26 @@ class MessengerService:
             return False
         return True
 
+    def send_action(self, recipient_id: str, action: str) -> bool:
+        """Send 'mark_seen', 'typing_on' or 'typing_off'. Never raises: these are only polish."""
+        token = get_settings().meta_page_access_token.get_secret_value()
+        if not token:
+            return False
+        try:
+            response = httpx.post(
+                f"https://graph.facebook.com/{GRAPH_API_VERSION}/me/messages",
+                params={"access_token": token},
+                json={"recipient": {"id": recipient_id}, "sender_action": action},
+                timeout=3,
+            )
+        except httpx.HTTPError as exc:
+            logger.warning("Sender action %s failed: %s", action, type(exc).__name__)
+            return False
+        if response.status_code != 200:
+            logger.warning("Sender action %s error %s", action, response.status_code)
+            return False
+        return True
+
     def send_text(self, recipient_id: str, text: str) -> bool:
         return self._post_message(recipient_id, {"text": text})
 
