@@ -4,6 +4,7 @@ For now there is NO login: the dashboard is open while ADMIN_PASSWORD (in .env) 
 Set ADMIN_PASSWORD to switch on HTTP Basic login (username "admin") for the page and the API.
 """
 import logging
+import re
 import secrets
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -12,9 +13,11 @@ from typing import Annotated, Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import FileResponse
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import get_settings
+from app.services import faq_store
+from app.services.faq import FAQS as DEFAULT_FAQS
 
 logger = logging.getLogger("uvicorn.error")
 basic = HTTPBasic(auto_error=False)
@@ -144,3 +147,85 @@ def update_product(product_id: int, body: ProductPatch, db: Any = Depends(get_db
         raise HTTPException(status_code=404, detail="Product not found")
     r = rows[0]
     return {"id": product_id, "name": r["name"], "price": float(r["price"]), "is_available": bool(r["is_available"])}
+
+
+
+# ---------- FAQ topics ----------
+TOPIC_RE = re.compile(r"^[a-z][a-z0-9_]{1,39}$")
+MAX_FAQ_TOPICS = 30  # the topic list is sent to the AI with every message, so keep it short
+FAQ_COLUMNS = "topic, description, answer_en, answer_tl, answer_hil"
+
+
+class FaqIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    description: str = Field(min_length=10, max_length=300)
+    answer_en: str = Field(min_length=1, max_length=1000)
+    answer_tl: str | None = Field(default=None, max_length=1000)
+    answer_hil: str | None = Field(default=None, max_length=1000)
+
+
+def _check_topic(topic: str) -> None:
+    if not TOPIC_RE.match(topic):
+        raise HTTPException(
+            status_code=400,
+            detail="Topic name must be 2-40 characters: lowercase letters, numbers and underscores, starting with a letter",
+        )
+
+
+@router.get("/api/faqs")
+def list_faqs(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
+    try:
+        return db.table("faqs").select(FAQ_COLUMNS).order("topic").execute().data or []
+    except Exception:
+        logger.exception("Could not load FAQs")
+        raise HTTPException(status_code=502, detail="Could not load the FAQ. Did you run the FAQ SQL in Supabase?")
+
+
+@router.put("/api/faqs/{topic}")
+def save_faq(topic: str, body: FaqIn, db: Any = Depends(get_db)) -> dict[str, Any]:
+    """Create or update one topic."""
+    _check_topic(topic)
+    existing = {r["topic"] for r in db.table("faqs").select("topic").execute().data or []}
+    if topic not in existing and len(existing) >= MAX_FAQ_TOPICS:
+        raise HTTPException(status_code=400, detail=f"At most {MAX_FAQ_TOPICS} topics")
+    row = {
+        "topic": topic,
+        "description": body.description,
+        "answer_en": body.answer_en,
+        "answer_tl": body.answer_tl or None,
+        "answer_hil": body.answer_hil or None,
+        "updated_at": datetime.now(timezone.utc).isoformat(),
+    }
+    db.table("faqs").upsert(row, on_conflict="topic").execute()
+    faq_store.clear_cache()
+    return {k: row[k] for k in ("topic", "description", "answer_en", "answer_tl", "answer_hil")}
+
+
+@router.delete("/api/faqs/{topic}")
+def delete_faq(topic: str, db: Any = Depends(get_db)) -> dict[str, Any]:
+    _check_topic(topic)
+    rows = db.table("faqs").delete().eq("topic", topic).execute().data
+    if not rows:
+        raise HTTPException(status_code=404, detail="Topic not found")
+    faq_store.clear_cache()
+    return {"topic": topic, "deleted": True}
+
+
+@router.post("/api/faqs-load-defaults")
+def load_default_faqs(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
+    """Copy the built-in answers from faq.py into the table, so the owner can edit them."""
+    if db.table("faqs").select("topic").limit(1).execute().data:
+        raise HTTPException(status_code=400, detail="There are already saved topics")
+    rows = [
+        {
+            "topic": topic,
+            "description": entry["description"],
+            "answer_en": entry["en"],
+            "answer_tl": entry.get("tl"),
+            "answer_hil": entry.get("hil"),
+        }
+        for topic, entry in DEFAULT_FAQS.items()
+    ]
+    db.table("faqs").insert(rows).execute()
+    faq_store.clear_cache()
+    return [{k: r[k] for k in ("topic", "description", "answer_en", "answer_tl", "answer_hil")} for r in rows]

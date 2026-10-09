@@ -26,9 +26,15 @@ th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vert
 th{font-size:12px;color:var(--muted);text-transform:uppercase}
 .tag{padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
 .pending{color:var(--warn)}.completed{color:var(--ok)}.cancelled{color:var(--bad)}
-select,input{font:inherit;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px}
+select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px}
 .hidden{display:none}
 .muted{color:var(--muted);font-size:13px}
+.faqs{display:grid;gap:12px;margin-bottom:12px}
+.faq h3{margin:0 0 8px}
+.faq label{display:block;margin:10px 0;font-size:13px}
+.faq textarea,.faq input{display:block;width:100%;margin-top:4px}
+.faq button{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
+.faq button.danger{color:var(--bad)}
 </style>
 </head>
 <body>
@@ -36,17 +42,19 @@ select,input{font:inherit;padding:5px;background:var(--bg);color:var(--text);bor
 <main>
   <div class="stats" id="stats"></div>
   <p id="err" style="color:var(--bad)"></p>
+  <p id="ok" style="color:var(--ok)"></p>
   <nav>
     <button class="on" data-tab="orders">Orders</button>
     <button data-tab="products">Products</button>
-    <button disabled title="Coming later">Delivery &amp; FAQ</button>
+    <button data-tab="faq">FAQ</button>
+    <button disabled title="Coming later">Delivery areas</button>
   </nav>
 
   <section id="orders">
     <p><label>Show: <select id="filter">
       <option value="all">All</option><option value="pending">Pending</option>
       <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
-    </select></label> <button id="refresh" type="button">Refresh</button></p> 
+    </select></label> <button id="refresh" type="button">Refresh</button></p>
     <div class="wrap"><table>
       <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes</th><th>Status</th></tr></thead>
       <tbody id="orderRows"></tbody>
@@ -59,6 +67,24 @@ select,input{font:inherit;padding:5px;background:var(--bg);color:var(--text);bor
       <tbody id="productRows"></tbody>
     </table></div>
   </section>
+
+  <section id="faq" class="hidden">
+    <p class="muted">These are the answers the bot gives to questions about the shop. The bot only picks the topic; it sends your answer exactly as you write it. Changes reach the bot within a minute.</p>
+    <div id="faqList" class="faqs"></div>
+    <div class="card faq">
+      <h3>Add a topic</h3>
+      <label>Topic name <span class="muted">(lowercase letters, numbers and underscores, for example gift_wrap)</span>
+        <input id="newTopic" maxlength="40" placeholder="gift_wrap"></label>
+      <label>What customers ask about <span class="muted">(describe the kind of question, for example "whether the shop offers gift wrapping or a gift box". A vague description sends unrelated questions here.)</span>
+        <textarea id="newDesc" rows="2" maxlength="300"></textarea></label>
+      <label>Answer in English <textarea id="newEn" rows="3" maxlength="1000"></textarea></label>
+      <label>Answer in Tagalog <span class="muted">(optional; English is sent if empty)</span>
+        <textarea id="newTl" rows="3" maxlength="1000"></textarea></label>
+      <label>Answer in Hiligaynon <span class="muted">(optional; English is sent if empty)</span>
+        <textarea id="newHil" rows="3" maxlength="1000"></textarea></label>
+      <button type="button" id="addFaqBtn">Add topic</button>
+    </div>
+  </section>
 </main>
 
 <script>
@@ -66,15 +92,23 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));  // customer text is untrusted
 const peso = n => "₱" + Number(n).toLocaleString("en-PH", {minimumFractionDigits:2});
 
-let orders = [], products = [];
+let orders = [], products = [], faqs = [];
 
 async function api(path, options = {}) {
   const res = await fetch("/admin/api/" + path, {headers: {"Content-Type": "application/json"}, ...options});
   if (res.status === 401) throw new Error("Login expired. Reload the page and sign in again.");
-  if (!res.ok) throw new Error("Server error (" + res.status + "). Nothing was changed.");
+  if (!res.ok) {
+    let detail = "";
+    try {
+      const d = (await res.json()).detail;
+      detail = typeof d === "string" ? d : (Array.isArray(d) && d[0] ? (d[0].loc || []).slice(-1) + ": " + d[0].msg : "");
+    } catch (_) {}
+    throw new Error(detail ? detail + ". Nothing was changed." : "Server error (" + res.status + "). Nothing was changed.");
+  }
   return res.json();
 }
 function showError(e) { $("err").textContent = e ? e.message : ""; }
+function showOk(text) { $("ok").textContent = text; setTimeout(() => { $("ok").textContent = ""; }, 3000); }
 
 async function load() {
   try { [orders, products] = await Promise.all([api("orders"), api("products")]); }
@@ -111,8 +145,8 @@ function renderProducts() {
       <td><input type="checkbox" ${p.is_available ? "checked" : ""} onchange="setAvail(${p.id}, this.checked)"></td></tr>`).join("");
 }
 
-// Every change is saved on the server first, then the page reloads its data from the server,
-// so the screen never shows a change that did not actually save.
+// Orders and products: every change is saved on the server first, then the page reloads its data
+// from the server, so the screen never shows a change that did not actually save.
 async function save(path, body) {
   showError(null);
   let problem = null;
@@ -132,14 +166,83 @@ async function setPrice(id, value) {
   return save("products/" + id, {price});
 }
 
+// FAQ topics. On a failed save the cards are NOT reloaded, so nothing you typed is lost.
+async function loadFaqs() {
+  try { faqs = await api("faqs"); }
+  catch (e) { showError(e); return; }
+  renderFaqs();
+}
+
+function faqCard(f) {
+  return `<div class="card faq" data-topic="${esc(f.topic)}">
+    <h3>${esc(f.topic)}</h3>
+    <label>What customers ask about <span class="muted">(tells the bot which questions belong here)</span>
+      <textarea class="f-desc" rows="2" maxlength="300">${esc(f.description)}</textarea></label>
+    <label>Answer in English
+      <textarea class="f-en" rows="3" maxlength="1000">${esc(f.answer_en)}</textarea></label>
+    <label>Answer in Tagalog <span class="muted">(optional; English is sent if empty)</span>
+      <textarea class="f-tl" rows="3" maxlength="1000">${esc(f.answer_tl || "")}</textarea></label>
+    <label>Answer in Hiligaynon <span class="muted">(optional; English is sent if empty)</span>
+      <textarea class="f-hil" rows="3" maxlength="1000">${esc(f.answer_hil || "")}</textarea></label>
+    <button type="button" onclick="saveFaq(this)">Save</button>
+    <button type="button" class="danger" onclick="deleteFaq(this)">Delete</button>
+  </div>`;
+}
+
+function renderFaqs() {
+  $("faqList").innerHTML = faqs.length ? faqs.map(faqCard).join("")
+    : '<div class="card faq">No saved topics yet, so the bot is using its built-in answers. <button type="button" onclick="loadDefaults()">Load the built-in answers to edit them</button></div>';
+}
+
+async function putFaq(topic, body) {
+  showError(null);
+  try { await api("faqs/" + encodeURIComponent(topic), {method: "PUT", body: JSON.stringify(body)}); }
+  catch (e) { showError(e); return false; }
+  await loadFaqs();
+  showOk("Saved: " + topic);
+  return true;
+}
+
+function saveFaq(btn) {
+  const card = btn.closest(".faq"), val = sel => card.querySelector(sel).value;
+  return putFaq(card.dataset.topic, {description: val(".f-desc"), answer_en: val(".f-en"), answer_tl: val(".f-tl"), answer_hil: val(".f-hil")});
+}
+
+async function deleteFaq(btn) {
+  const topic = btn.closest(".faq").dataset.topic;
+  if (!confirm("Delete the topic \"" + topic + "\"? The bot will stop answering these questions.")) return;
+  showError(null);
+  try { await api("faqs/" + encodeURIComponent(topic), {method: "DELETE"}); }
+  catch (e) { showError(e); return; }
+  await loadFaqs();
+  showOk("Deleted: " + topic);
+}
+
+async function addFaq() {
+  const topic = $("newTopic").value.trim().toLowerCase();
+  if (faqs.some(f => f.topic === topic)) { showError(new Error("A topic named \"" + topic + "\" already exists. Edit it above")); return; }
+  const added = await putFaq(topic, {description: $("newDesc").value, answer_en: $("newEn").value, answer_tl: $("newTl").value, answer_hil: $("newHil").value});
+  if (added) ["newTopic", "newDesc", "newEn", "newTl", "newHil"].forEach(id => { $(id).value = ""; });
+}
+
+async function loadDefaults() {
+  showError(null);
+  try { await api("faqs-load-defaults", {method: "POST"}); }
+  catch (e) { showError(e); return; }
+  await loadFaqs();
+  showOk("Built-in answers loaded");
+}
+
+const TABS = ["orders", "products", "faq"];
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-  $("orders").classList.toggle("hidden", b.dataset.tab !== "orders");
-  $("products").classList.toggle("hidden", b.dataset.tab !== "products");
+  TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
 });
 $("filter").onchange = renderOrders;
 $("refresh").onclick = () => { showError(null); load(); };
+$("addFaqBtn").onclick = addFaq;
 load();
+loadFaqs();
 </script>
 </body>
 </html>

@@ -13,7 +13,7 @@ from typing import Any
 from app.schemas.order import _PHONE_RE, OrderRequest
 from app.services import order_service as orders
 from app.services.ai_service import AIResult, AIService, AIUnavailableError, Intent
-from app.services.faq import FAQS
+from app.services.faq_store import load_faqs
 from app.services.messages import t
 
 logger = logging.getLogger("uvicorn.error")
@@ -253,7 +253,7 @@ class ConversationService:
                 if len(note) > MAX_NOTES_LENGTH:
                     return self._advance(draft, products, available, t(lang, "notes_too_long"))
                 return self._advance({**draft, "notes": note, "notes_done": True}, products, available)
-        topics = {topic: row["description"] for topic, row in FAQS.items()}
+        topics = {topic: row["description"] for topic, row in load_faqs(self._client).items()}
         try:
             result = self._ai.interpret_message(text, state, [p["name"] for p in available], topics)
         except AIUnavailableError:  # the AI is down: say so, and don't count it as an unknown question
@@ -470,7 +470,7 @@ class ConversationService:
         if result.intent == Intent.ORDERING_INFO:
             return [Reply(text=t(lang, "ordering_info"), options=self._start_options(lang))]
         if result.intent == Intent.FAQ_QUESTION:
-            row = FAQS.get(result.faq_topic or "")
+            row = load_faqs(self._client).get(result.faq_topic or "")
             answer = row and (row.get(lang) or row["en"])
             if answer:  # the answer is text YOU wrote in faq.py, never AI-generated
                 return [Reply(text=answer, options=self._start_options(lang))]
