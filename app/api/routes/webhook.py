@@ -44,5 +44,7 @@ def receive_event(payload: dict[str, Any] = Body(default_factory=dict)):
         if msg.payload is None:  # typed text may wait for the AI, so show "typing..."
             messenger.send_action(msg.sender_id, "typing_on")
         replies = handle_incoming_message(msg.sender_id, msg.text, msg.message_id, msg.payload)
+        if not replies and msg.payload is None:  # the owner has this customer: the bot stays quiet
+            messenger.send_action(msg.sender_id, "typing_off")
         deliver_replies(msg.sender_id, replies, messenger)
     return {"status": "received"}

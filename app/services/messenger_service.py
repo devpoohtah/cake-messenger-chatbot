@@ -89,8 +89,9 @@ def build_product_carousel_message(
         subtitle = f"{price} — {p['description']}" if p.get("description") else price
         elements.append(
             {
-                "title": p["name"],
-                "subtitle": subtitle,
+                "title": p["name"][:80],  # Meta limit: 80 characters
+                "subtitle": subtitle[:80],
+                **({"image_url": p["image_url"]} if p.get("image_url") else {}),  # public https link
                 "buttons": [
                     {
                         "type": "postback",

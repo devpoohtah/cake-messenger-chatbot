@@ -24,6 +24,16 @@ class InvalidQuantityError(OrderValidationError): ...
 class ProductNotFoundError(OrderValidationError): ...
 class ProductUnavailableError(OrderValidationError): ...
 class OrderNotConfirmedError(OrderValidationError): ...
+
+
+class InsufficientStockError(OrderValidationError):
+    """Fewer cakes in stock than requested. left == 0 means sold out."""
+
+    def __init__(self, product_name: str = "", left: int = 0) -> None:
+        super().__init__(f"Not enough stock for {product_name!r}: {left} left")
+        self.product_name, self.left = product_name, left
+
+
 class OrderCreationError(RuntimeError): ...
 
 
@@ -57,6 +67,9 @@ def validate_product(product: dict[str, Any] | None, requested_name: str = "") -
         raise ProductNotFoundError(f"Product not found: {requested_name!r}")
     if not product.get("is_available", False):
         raise ProductUnavailableError(f"Product is currently unavailable: {product.get('name')!r}")
+    stock = product.get("stock")  # None = unlimited, 0 = sold out
+    if stock is not None and stock <= 0:
+        raise InsufficientStockError(str(product.get("name", "")), 0)
     return product
 
 
@@ -87,6 +100,9 @@ def build_order_lines(request: OrderRequest, products: list[dict[str, Any]]) -> 
     lines = []
     for product, qty in merged.values():
         qty = validate_quantity(qty)  # re-check merged total against the cap
+        stock = product.get("stock")
+        if stock is not None and qty > stock:
+            raise InsufficientStockError(product["name"], int(stock))
         unit_price = _money(product["price"])
         lines.append(
             OrderLine(
@@ -155,9 +171,12 @@ def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreat
             },
         ).execute()
     except Exception as exc:  # supabase/postgrest errors
+        if "not enough stock" in str(exc).lower():  # someone else took the cakes a moment ago
+            raise InsufficientStockError() from exc
         logger.exception("create_order_with_items RPC failed")
         raise OrderCreationError("Could not save the order.") from exc
 
+    data = response.data  # restored: this line was lost in an earlier commit, so no order could be saved
 
     # Delivery/pick-up and notes are saved right after the order. If this fails (for example the
     # columns were not added yet), the order itself is already saved, so only log it.

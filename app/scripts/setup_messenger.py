@@ -20,6 +20,7 @@ GREETING = "Hi! Welcome to Mrs Brave's Cake \U0001F370 Tap Get Started to see ou
 MENU_ITEMS = [  # (title, payload): the payloads are the same ones the bot's buttons use
     ("See menu", "MENU"),
     ("Order now", "START_ORDER"),
+    ("Talk to the owner", "TALK_OWNER"),
 ]
 
 

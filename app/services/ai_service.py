@@ -27,6 +27,7 @@ class Intent(str, Enum):
     NOT_SOLD = "not_sold"
     SMALL_TALK = "small_talk"
     ABOUT_BOT = "about_bot"
+    TALK_TO_OWNER = "talk_to_owner"
     START_ORDER = "start_order"
     PROVIDE_ORDER_DETAILS = "provide_order_details"
     CONFIRM_ORDER = "confirm_order"
@@ -56,6 +57,7 @@ Intents:
 - not_sold: asks for something the shop does not sell: any other food, drink or service (coffee, bread, cupcakes), or a cake that is NOT on the available products list. Asking what the shop sells in general is a product_question.
 - small_talk: friendly chit-chat unrelated to the shop (how are you, compliments, jokes, the weather, random chatter)
 - about_bot: asks who or what they are talking to, or whether it is a bot or a real person
+- talk_to_owner: wants to speak with the shop owner or a real person instead of the bot, or asks for the owner to contact them (not a question about who the owner is)
 - price_question: asks about the price of a cake
 - ordering_info: asks how to order
 - faq_question: asks about the shop other than cakes and prices (payment, hours, delivery, and so on). Set faq_topic ONLY when the question is clearly about that topic's description. Never pick the closest-sounding topic. If you are unsure, or no topic clearly fits, set faq_topic to null.
@@ -76,6 +78,7 @@ Examples:
 - "nagbebenta kayo ng cake?", "ano baligya mo?" and "what cakes do you have?" are product_question
 - "how are you?", "kumusta ka na?" and "tell me a joke" are small_talk
 - "are you a bot?", "robot ka ba?", "tao ka ba?", "sino ka?" and "sin-o ka?" are about_bot
+- "gusto ko makausap ang owner", "can I talk to a real person?", "kausapon ko ang tag-iya" and "pa-contact naman sa owner" are talk_to_owner
 - "where is my order?", "nasaan na po ang order ko?", "diin na ang order ko?", "ano na status sang order ko?" and "naorder na ba?" are order_status
 - "pwde utang" and "can I pay later?" are faq_question about credit
 - "pwede ba i-deliver?" and "nagadeliver kamo?" are faq_question about delivery

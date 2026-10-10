@@ -245,3 +245,32 @@ create trigger trg_conversations_updated_at
   for each row execute function public.set_updated_at();
 
 alter table public.conversations enable row level security;
+
+
+-- Phase 6: owner inbox. Run once in the Supabase SQL Editor. Safe to re-run.
+-- Holds two kinds of rows:
+--   'handoff'    a customer asked to talk to the owner (the bot stays quiet for them while 'open')
+--   'unanswered' a question the bot could not answer (shown in the dashboard so the owner can write an FAQ)
+
+create table if not exists public.owner_inbox (
+  id                   bigint generated always as identity primary key,
+  messenger_id         text not null,
+  kind                 text not null check (kind in ('handoff', 'unanswered')),
+  message              text,
+  status               text not null default 'open' check (status in ('open', 'resolved')),
+  resolved_by          text check (resolved_by in ('owner', 'timeout', 'customer')),
+  back_notice_pending  boolean not null default false,  -- owner marked it done; tell the customer the bot is back
+  created_at           timestamptz not null default now(),
+  updated_at           timestamptz not null default now(),
+  resolved_at          timestamptz
+);
+
+create index if not exists idx_owner_inbox_lookup on public.owner_inbox (messenger_id, kind, id desc);
+create index if not exists idx_owner_inbox_status on public.owner_inbox (status, id desc);
+
+drop trigger if exists trg_owner_inbox_updated_at on public.owner_inbox;
+create trigger trg_owner_inbox_updated_at
+  before update on public.owner_inbox
+  for each row execute function public.set_updated_at();
+
+alter table public.owner_inbox enable row level security;

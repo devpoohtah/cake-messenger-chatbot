@@ -35,6 +35,17 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
 .faq textarea,.faq input{display:block;width:100%;margin-top:4px}
 .faq button{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
 .faq button.danger{color:var(--bad)}
+#inboxTab.alert{border-color:var(--bad);color:var(--bad);font-weight:600}
+#inboxTab.on.alert{color:#fff}
+.wants{color:var(--bad);font-weight:600}
+.thumb{width:76px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:block}
+.thumb.none{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
+.cakeform{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end}
+.cakeform label{display:block;font-size:13px}
+.cakeform input{display:block;width:100%;margin-top:4px;box-sizing:border-box}
+.cakeform button,.photo-btn{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
+.soldout{color:var(--bad);font-weight:600;font-size:12px}
+.inbox-actions button{padding:5px 10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer;margin:0 4px 4px 0}
 </style>
 </head>
 <body>
@@ -47,6 +58,7 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
     <button class="on" data-tab="orders">Orders</button>
     <button data-tab="products">Products</button>
     <button data-tab="faq">FAQ</button>
+    <button data-tab="inbox" id="inboxTab">Questions</button>
     <button disabled title="Coming later">Delivery areas</button>
   </nav>
 
@@ -62,8 +74,21 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
   </section>
 
   <section id="products" class="hidden">
+    <div class="card">
+      <h3>Add a cake</h3>
+      <div class="cakeform">
+        <label>Cake name<input id="newCakeName" maxlength="80" placeholder="Mango Float"></label>
+        <label>Price (₱)<input id="newCakePrice" type="number" min="0" step="1" placeholder="400"></label>
+        <label>How many available<input id="newCakeStock" type="number" min="0" step="1" placeholder="empty = unlimited"></label>
+        <label>Short description <span class="muted">(optional)</span><input id="newCakeDesc" maxlength="60" placeholder="Graham, mango, cream"></label>
+        <label>Photo <span class="muted">(optional)</span><input id="newCakePhoto" type="file" accept="image/*"></label>
+        <button id="addCakeBtn" type="button">Add cake</button>
+      </div>
+      <p class="muted">The photo is cropped to the wide shape Messenger shows, so keep the cake in the middle. Customers can order until the number runs out; a cake at 0 shows as sold out.</p>
+    </div>
+    <input id="photoPick" type="file" accept="image/*" class="hidden">
     <div class="wrap"><table>
-      <thead><tr><th>Cake</th><th>Price (₱)</th><th>Available</th></tr></thead>
+      <thead><tr><th>Photo</th><th>Cake</th><th>Price (₱)</th><th>In stock</th><th>Available</th><th></th></tr></thead>
       <tbody id="productRows"></tbody>
     </table></div>
   </section>
@@ -85,6 +110,16 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
       <button type="button" id="addFaqBtn">Add topic</button>
     </div>
   </section>
+
+  <section id="inbox" class="hidden">
+    <p class="muted"><b>Wants the owner</b> means a customer asked to talk to you. Reply to them in the Facebook Page inbox (Meta Business Suite); the bot stays quiet for that customer until you press <b>Done</b> (or after 12 hours). <b>Unanswered</b> are questions the bot could not answer: you can turn one into an FAQ topic.</p>
+    <p><label>Show: <select id="inboxFilter"><option value="open">Open</option><option value="all">All</option></select></label>
+      <button id="inboxRefresh" type="button">Refresh</button></p>
+    <div class="wrap"><table>
+      <thead><tr><th>Type</th><th>When</th><th>Customer</th><th>Message</th><th></th></tr></thead>
+      <tbody id="inboxRows"></tbody>
+    </table></div>
+  </section>
 </main>
 
 <script>
@@ -92,7 +127,7 @@ const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));  // customer text is untrusted
 const peso = n => "₱" + Number(n).toLocaleString("en-PH", {minimumFractionDigits:2});
 
-let orders = [], products = [], faqs = [];
+let orders = [], products = [], faqs = [], inbox = [];
 
 async function api(path, options = {}) {
   const res = await fetch("/admin/api/" + path, {headers: {"Content-Type": "application/json"}, ...options});
@@ -140,9 +175,16 @@ function renderOrders() {
 
 function renderProducts() {
   $("productRows").innerHTML = products.map(p => `
-    <tr><td>${esc(p.name)}</td>
+    <tr>
+      <td>${p.image_url ? `<img class="thumb" src="${esc(p.image_url)}" alt="">` : '<div class="thumb none">no photo</div>'}</td>
+      <td>${esc(p.name)}${p.stock === 0 ? '<br><span class="soldout">sold out</span>' : ""}
+        ${p.description ? `<br><span class="muted">${esc(p.description)}</span>` : ""}</td>
       <td><input type="number" value="${p.price}" min="0" step="1" style="width:90px" onchange="setPrice(${p.id}, this.value)"></td>
-      <td><input type="checkbox" ${p.is_available ? "checked" : ""} onchange="setAvail(${p.id}, this.checked)"></td></tr>`).join("");
+      <td><input type="number" value="${p.stock === null ? "" : p.stock}" min="0" step="1" placeholder="unlimited" style="width:100px" onchange="setStock(${p.id}, this.value)"></td>
+      <td><input type="checkbox" ${p.is_available ? "checked" : ""} onchange="setAvail(${p.id}, this.checked)"></td>
+      <td><button type="button" class="photo-btn" onclick="changePhoto(${p.id})">${p.image_url ? "Change photo" : "Add photo"}</button>
+        ${p.image_url ? `<button type="button" class="photo-btn" onclick="removePhoto(${p.id})">Remove photo</button>` : ""}</td>
+    </tr>`).join("");
 }
 
 // Orders and products: every change is saved on the server first, then the page reloads its data
@@ -164,6 +206,69 @@ async function setPrice(id, value) {
     return;
   }
   return save("products/" + id, {price});
+}
+async function setStock(id, value) {  // an empty box means unlimited
+  const stock = value.trim() === "" ? null : Number(value);
+  if (stock !== null && (!Number.isInteger(stock) || stock < 0)) {
+    showError(null); await load(); showError(new Error("Enter a whole number, or leave it empty for unlimited."));
+    return;
+  }
+  return save("products/" + id, {stock});
+}
+
+// Photos: cropped to 1.91:1 (the shape Messenger shows) and shrunk to a small JPEG in the browser.
+function photoToJpeg(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const W = 1000, H = 524, canvas = document.createElement("canvas");
+      canvas.width = W; canvas.height = H;
+      const scale = Math.max(W / img.width, H / img.height), w = img.width * scale, h = img.height * scale;
+      canvas.getContext("2d").drawImage(img, (W - w) / 2, (H - h) / 2, w, h);
+      URL.revokeObjectURL(url);
+      canvas.toBlob(blob => {
+        if (!blob) return reject(new Error("Could not read that photo."));
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);  // a data URL (JPEG)
+        reader.onerror = () => reject(new Error("Could not read that photo."));
+        reader.readAsDataURL(blob);
+      }, "image/jpeg", 0.85);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("That file is not a photo.")); };
+    img.src = url;
+  });
+}
+
+let photoFor = null;
+function changePhoto(id) { photoFor = id; $("photoPick").value = ""; $("photoPick").click(); }
+$("photoPick").onchange = async () => {
+  const file = $("photoPick").files[0];
+  if (!file || photoFor === null) return;
+  showError(null);
+  try { await save("products/" + photoFor, {image_data: await photoToJpeg(file)}); }
+  catch (e) { showError(e); }
+};
+function removePhoto(id) { return save("products/" + id, {remove_image: true}); }
+
+async function addCake() {
+  showError(null);
+  const name = $("newCakeName").value.trim(), price = Number($("newCakePrice").value);
+  const stockText = $("newCakeStock").value.trim(), file = $("newCakePhoto").files[0];
+  if (!name) return showError(new Error("Enter the cake name."));
+  if ($("newCakePrice").value === "" || !Number.isFinite(price) || price < 0) return showError(new Error("Enter a valid price."));
+  const stock = stockText === "" ? null : Number(stockText);
+  if (stock !== null && (!Number.isInteger(stock) || stock < 0)) return showError(new Error("How many available must be a whole number, or empty for unlimited."));
+  $("addCakeBtn").disabled = true;
+  try {
+    const body = {name, price, stock, description: $("newCakeDesc").value.trim() || null};
+    if (file) body.image_data = await photoToJpeg(file);
+    await api("products", {method: "POST", body: JSON.stringify(body)});
+    ["newCakeName", "newCakePrice", "newCakeStock", "newCakeDesc", "newCakePhoto"].forEach(id => { $(id).value = ""; });
+    showOk("Cake added.");
+    await load();
+  } catch (e) { showError(e); }
+  finally { $("addCakeBtn").disabled = false; }
 }
 
 // FAQ topics. On a failed save the cards are NOT reloaded, so nothing you typed is lost.
@@ -233,7 +338,49 @@ async function loadDefaults() {
   showOk("Built-in answers loaded");
 }
 
-const TABS = ["orders", "products", "faq"];
+// Owner inbox: handoffs (a customer wants the owner) and questions the bot could not answer.
+async function loadInbox() {
+  try { inbox = await api("inbox"); }
+  catch (e) { showError(e); return; }
+  renderInbox();
+}
+
+function renderInbox() {
+  const open = inbox.filter(i => i.status === "open");
+  const waiting = open.filter(i => i.kind === "handoff").length;
+  $("inboxTab").textContent = open.length ? "Questions (" + open.length + ")" : "Questions";
+  $("inboxTab").classList.toggle("alert", waiting > 0);
+  document.title = (waiting ? "(" + waiting + ") " : "") + "Mrs Brave's Cake – Admin";
+  const rows = $("inboxFilter").value === "open" ? open : inbox;
+  $("inboxRows").innerHTML = rows.map(i => `
+    <tr>
+      <td>${i.kind === "handoff" ? '<span class="wants">Wants the owner</span>' : "Unanswered"}${i.status === "resolved" ? '<br><span class="muted">done</span>' : ""}</td>
+      <td>${esc(i.when)}</td>
+      <td>${esc(i.customer) || '<span class="muted">–</span>'}</td>
+      <td>${esc(i.message)}</td>
+      <td class="inbox-actions">${i.status === "open" ? (i.kind === "handoff"
+        ? `<button type="button" onclick="resolveInbox(${i.id})">Done, bot can answer again</button>`
+        : `<button type="button" onclick="makeFaq(${i.id})">Make FAQ</button><button type="button" onclick="resolveInbox(${i.id})">Dismiss</button>`) : ""}</td>
+    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nothing here.</td></tr>';
+}
+
+async function resolveInbox(id) {
+  showError(null);
+  try { await api("inbox/" + id, {method: "PATCH"}); }
+  catch (e) { showError(e); return; }
+  await loadInbox();
+}
+
+function makeFaq(id) {  // jump to the FAQ tab with the question filled in; the owner finishes and saves it there
+  const item = inbox.find(i => i.id === id);
+  if (!item) return;
+  document.querySelector('nav button[data-tab="faq"]').click();
+  $("newDesc").value = "Questions like: " + item.message;
+  $("newTopic").focus();
+  showOk("Fill in a topic name and the answer, then press Add topic. Dismiss the question afterwards.");
+}
+
+const TABS = ["orders", "products", "faq", "inbox"];
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
   TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
@@ -241,8 +388,13 @@ document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () =>
 $("filter").onchange = renderOrders;
 $("refresh").onclick = () => { showError(null); load(); };
 $("addFaqBtn").onclick = addFaq;
+$("addCakeBtn").onclick = addCake;
+$("inboxFilter").onchange = renderInbox;
+$("inboxRefresh").onclick = () => { showError(null); loadInbox(); };
 load();
 loadFaqs();
+loadInbox();
+setInterval(loadInbox, 30000);  // a customer waiting for the owner shows up while this page is open
 </script>
 </body>
 </html>

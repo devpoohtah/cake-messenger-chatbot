@@ -13,6 +13,7 @@ from typing import Any
 from app.schemas.order import _PHONE_RE, OrderRequest
 from app.services import order_service as orders
 from app.services.ai_service import AIResult, AIService, AIUnavailableError, Intent
+from app.services import owner_inbox
 from app.services.faq_store import load_faqs
 from app.services.messages import t
 
@@ -23,6 +24,17 @@ COLLECTING = "collecting_details"
 AWAITING = "awaiting_confirmation"
 
 CANCEL_WORDS = {"cancel", "stop", "kansela"}
+TALK_OWNER = "TALK_OWNER"  # payload of the "Talk to the owner" button and menu item
+# Typed ways of asking for the owner (compared after _norm: lowercase, no punctuation). Short messages only.
+OWNER_WORDS = {"owner", "the owner", "human", "tao", "may ari", "mayari", "tagiya", "tag iya"}
+OWNER_PHRASES = (
+    "talk to the owner", "talk to owner", "speak to the owner", "speak to owner", "talk to a person",
+    "talk to a human", "speak to a human", "speak to a person", "real person", "human agent",
+    "kausapin ang owner", "makausap ang owner", "makausap ang may ari", "makausap ko ang may ari",
+    "kausapin ang may ari", "makipagusap sa owner", "makipagusap sa may ari",
+    "kausapon ang owner", "kausapon ko ang owner", "kausapon ang tagiya", "makigistorya sa owner",
+    "makigestorya sa owner", "makigsulti sa owner", "makigistorya sa tagiya",
+)
 NO_WORDS = {"no", "hindi", "indi", "ayaw"}  # cancel only while waiting for confirmation
 # Typed confirmation is deliberately strict: "ok", "sige" and "oo" are often just
 # acknowledgements (for example after an FAQ answer) and must never place an order.
@@ -48,6 +60,14 @@ QUESTION_INTENTS = {
     Intent.GREETING, Intent.PRODUCT_QUESTION, Intent.PRICE_QUESTION, Intent.ORDERING_INFO, Intent.FAQ_QUESTION,
     Intent.ORDER_STATUS, Intent.NOT_SOLD, Intent.SMALL_TALK, Intent.ABOUT_BOT,
 }
+
+def _wants_owner(words: str) -> bool:
+    """A short typed message that clearly asks for the owner. Longer messages go to the AI instead."""
+    if not words or len(words.split()) > 10:
+        return False
+    return words in OWNER_WORDS or any(p in words for p in OWNER_PHRASES)
+
+
 CONTACT_FIELDS = ("customer_name", "contact_number", "location")
 
 
@@ -101,6 +121,12 @@ def _find_product_by_id(raw: str, products: list[dict[str, Any]]) -> dict[str, A
     return next((p for p in products if int(p["product_id"]) == pid), None)
 
 
+def _unavailable_text(lang: str, product: dict[str, Any]) -> str:
+    """'Sold out' when the stock is 0, otherwise 'currently unavailable' (hidden by the owner)."""
+    key = "product_sold_out" if product.get("sold_out") else "product_unavailable"
+    return t(lang, key, name=product["name"])
+
+
 def _clean_fields(result: AIResult, products: list[dict[str, Any]], lang: str) -> tuple[dict[str, Any], str | None]:
     """Validate what the AI extracted. Anything invalid is dropped, never trusted."""
     fields: dict[str, Any] = {}
@@ -110,7 +136,7 @@ def _clean_fields(result: AIResult, products: list[dict[str, Any]], lang: str) -
         if product and product.get("is_available"):
             fields["product"] = product["name"]
         elif product:
-            notice = t(lang, "product_unavailable", name=product["name"])
+            notice = _unavailable_text(lang, product)
     if result.quantity is not None:
         try:
             fields["quantity"] = orders.validate_quantity(result.quantity)
@@ -183,7 +209,11 @@ class ConversationService:
         ).execute()
 
     def _products(self) -> list[dict[str, Any]]:
-        return self._client.table("products").select("*").order("product_id").execute().data or []
+        rows = self._client.table("products").select("*").order("product_id").execute().data or []
+        for p in rows:
+            if p.get("stock") is not None and p["stock"] <= 0:  # stock 0 = sold out; blank (None) = unlimited
+                p["is_available"], p["sold_out"] = False, True
+        return rows
     
     # ---------- entry point ----------
     def handle(
@@ -193,16 +223,61 @@ class ConversationService:
         state, draft = self._load(sender_id)
         if message_id and draft.get("last_mid") == message_id:
             return None
+        silent, bot_back = self._handoff_gate(sender_id, text, payload)
+        if silent:  # the owner has this customer: stay quiet, but remember the message id (Meta retries)
+            if message_id:
+                draft["last_mid"] = message_id
+                self._save(sender_id, state, draft)
+            return []
         self._lang_seen = bool(draft.get("lang_seen"))
         self._lang_cand = draft.get("lang_cand")
         self._prev_misses = int(draft.get("misses", 0))  # NEW (Edit 2.3)
         replies, state, draft = self._process(sender_id, text, payload, state, draft)
+        if bot_back:  # coming back from the owner: say that this is the automated assistant again
+            replies = [Reply(text=t(draft.get("lang", "en"), "owner_back"))] + replies
         draft["lang_seen"], draft["lang_cand"] = self._lang_seen, self._lang_cand  # survive resets
         draft["misses"] = self._prev_misses + 1 if self._missed else 0  # NEW (Edit 2.4)
         if message_id:
             draft["last_mid"] = message_id  # survives resets, so a retried Confirm can't order twice
         self._save(sender_id, state, draft)
         return replies
+    # ---------- owner handoff ----------
+    def _handoff_gate(self, sender_id: str, text: str, payload: str | None) -> tuple[bool, bool]:
+        """Returns (stay_silent, bot_is_back). Never raises: if the check fails the bot answers normally."""
+        try:
+            row = owner_inbox.latest_handoff(self._client, sender_id)
+            if row is None:
+                return False, False
+            if row["status"] == "open":
+                if owner_inbox.is_expired(row):
+                    owner_inbox.resolve(self._client, row["id"], "timeout")
+                    return False, True
+                if payload == TALK_OWNER:
+                    return False, False  # _start_handoff tells them the owner was already notified
+                if payload:  # the customer tapped a bot button, so they want the bot back
+                    owner_inbox.resolve(self._client, row["id"], "customer")
+                    return False, True
+                owner_inbox.touch(self._client, row["id"], text)
+                return True, False
+            if row.get("back_notice_pending"):  # the owner pressed Done in the dashboard
+                owner_inbox.clear_back_notice(self._client, row["id"])
+                return False, True
+        except Exception:
+            logger.warning("Owner inbox check failed; answering normally")
+        return False, False
+
+    def _start_handoff(self, sender_id: str, text: str, lang: str, state: str, draft: dict[str, Any]):
+        """The customer wants the owner. The order draft is kept, so an order in progress can continue later."""
+        try:
+            row = owner_inbox.latest_handoff(self._client, sender_id)
+        except Exception:
+            row = None
+        if row and row["status"] == "open":
+            return [Reply(text=t(lang, "owner_waiting"), options=self._start_options(lang))], state, draft
+        if not owner_inbox.open_handoff(self._client, sender_id, text.strip() or "(tapped Talk to the owner)"):
+            return [Reply(text=t(lang, "owner_unavailable"), options=self._start_options(lang))], state, draft
+        return [Reply(text=t(lang, "owner_handoff"))], state, draft
+
     # ---------- flow ----------
     def _process(self, sender_id: str, text: str, payload: str | None, state: str, draft: dict[str, Any]):
         products = self._products()
@@ -217,6 +292,8 @@ class ConversationService:
             if outcome is not None:
                 return outcome
 
+        if not payload and _wants_owner(words):  # typed request for the owner: no AI call needed
+            return self._start_handoff(sender_id, text, lang, state, draft)
         if state != IDLE and words in CANCEL_WORDS:
             return self._cancelled(lang)
         if state == AWAITING:
@@ -261,6 +338,8 @@ class ConversationService:
 
         lang = self._resolve_lang(lang, result.language)
         draft = {**draft, "lang": lang}
+        if result.intent == Intent.TALK_TO_OWNER:
+            return self._start_handoff(sender_id, text, lang, state, draft)
         if result.intent == Intent.THANKS and not asking_name:
             return self._thanks(state, draft, products, available)
         if state != IDLE and result.intent == Intent.CANCEL_ORDER:
@@ -336,6 +415,7 @@ class ConversationService:
         """Print questions the bot could not answer, so you know which FAQs to write."""
         if self._text.strip():
             logger.warning("Unanswered question: %r", self._text[:300])
+            owner_inbox.add_unanswered(self._client, self._sender_id, self._text)
 
     def _merge(self, draft: dict[str, Any], fields: dict[str, Any]) -> dict[str, Any]:
         """Apply validated fields from typed text to the draft."""
@@ -390,11 +470,13 @@ class ConversationService:
             return [Reply(text=t(lang, "greeting"), options=self._start_options(lang))], state, draft
         if kind == "MENU":
             return self._menu_replies(lang, available), state, draft
+        if kind == TALK_OWNER:
+            return self._start_handoff(sender_id, "", lang, state, draft)  # no typed text: a default note is saved
         if kind == "ORDER":
             product = _find_product_by_id(arg, products)
             if product is None or not product.get("is_available"):
                 name = product["name"] if product else ""
-                notice = t(lang, "product_unavailable", name=name) if product else None
+                notice = _unavailable_text(lang, product) if product else None
                 return self._advance({**base, "pending": None, "force_product": True}, products, available, notice)
             return self._advance({**base, "pending": product["name"], "cart_done": False}, products, available)
         if kind == "QTY":
@@ -433,6 +515,11 @@ class ConversationService:
         return [(t(lang, "btn_order_now"), "START_ORDER"), (t(lang, "btn_menu"), "MENU")]
 
     @staticmethod
+    def _owner_options(lang: str) -> list[tuple[str, str]]:
+        """Start buttons plus 'Talk to the owner', offered when the bot could not help."""
+        return [(t(lang, "btn_order_now"), "START_ORDER"), (t(lang, "btn_menu"), "MENU"), (t(lang, "btn_talk_owner"), TALK_OWNER)]
+
+    @staticmethod
     def _confirm_prompt(lang: str, key: str) -> Reply:
         return Reply(text=t(lang, key), options=[(t(lang, "btn_confirm"), "CONFIRM"), (t(lang, "btn_cancel"), "CANCEL")])
 
@@ -463,7 +550,7 @@ class ConversationService:
             if product is None:
                 return self._menu_replies(lang, available)
             if not product.get("is_available"):
-                return [Reply(text=t(lang, "product_unavailable", name=product["name"]))] + self._menu_replies(lang, available)
+                return [Reply(text=_unavailable_text(lang, product))] + self._menu_replies(lang, available)
             desc = f"\n{product['description']}" if product.get("description") else ""
             text = t(lang, "price_line", name=product["name"], price=_peso(product["price"]), desc=desc)
             return [Reply(text=text, options=[(t(lang, "btn_order_this"), f"ORDER:{product['product_id']}"), (t(lang, "btn_menu"), "MENU")])]
@@ -475,11 +562,12 @@ class ConversationService:
             if answer:  # the answer is text YOU wrote in faq.py, never AI-generated
                 return [Reply(text=answer, options=self._start_options(lang))]
             self._log_unanswered()
-            return [Reply(text=t(lang, "faq_unknown"), options=self._start_options(lang))]
+            return [Reply(text=t(lang, "faq_unknown"), options=self._owner_options(lang))]
         self._log_unanswered()
         self._missed = True  # counted, so a second miss in a row gets a different reply
         key = "fallback_again" if self._prev_misses else "fallback"
-        return [Reply(text=t(lang, key), options=self._start_options(lang))]
+        options = self._owner_options(lang) if self._prev_misses else self._start_options(lang)  # 2nd miss: offer the owner
+        return [Reply(text=t(lang, key), options=options)]
 
     def _cart_text(self, cart: list[dict[str, Any]], products) -> str:
         rows = []
@@ -490,10 +578,39 @@ class ConversationService:
                 rows.append(f"• {item['quantity']} × {p['name']} — {_peso(subtotal)}")
         return "\n".join(rows)
 
+    @staticmethod
+    def _stock_problems(draft: dict[str, Any], products) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
+        """Cart items that are no longer orderable, or ask for more than the stock. (item, product) pairs."""
+        by_name = {p["name"].strip().lower(): p for p in products}
+        problems = []
+        for item in draft.get("cart") or []:
+            p = by_name.get(item["product"].strip().lower())
+            if p is None or not p.get("is_available") or (p.get("stock") is not None and item["quantity"] > p["stock"]):
+                problems.append((item, p))
+        return problems
+
+    def _fit_cart_to_stock(self, draft: dict[str, Any], products, lang: str) -> tuple[dict[str, Any], str | None]:
+        """Take unorderable items out of the cart and re-ask the quantity of ones that are only partly in stock."""
+        problems = self._stock_problems(draft, products)
+        if not problems:
+            return draft, None
+        gone = {id(item) for item, _ in problems}
+        notices, pending = [], draft.get("pending")
+        for item, p in problems:
+            if p is None or not p.get("is_available"):
+                notices.append(_unavailable_text(lang, p or {"name": item["product"]}))
+            else:
+                notices.append(t(lang, "qty_limit_stock", name=p["name"], left=p["stock"]))
+                pending = p["name"]
+        cart = [i for i in draft["cart"] if id(i) not in gone]
+        return {**draft, "cart": cart, "pending": pending, "cart_done": False}, " ".join(notices)
+
     def _advance(self, draft: dict[str, Any], products, available, notice: str | None = None):
         """Ask for whatever is missing next, or show the summary when everything is present."""
         lang = draft.get("lang", "en")
-        draft = {**draft}
+        draft, stock_notice = self._fit_cart_to_stock({**draft}, products, lang)
+        if stock_notice:
+            notice = f"{notice} {stock_notice}" if notice else stock_notice
         cart = draft.get("cart") or []
         if draft.pop("limit_hit", False):
             notice = t(lang, "qty_limit_order", max=MAX_CAKES_PER_ORDER)
@@ -501,8 +618,12 @@ class ConversationService:
 
         if draft.get("pending"):
             draft["asking"] = "quantity"
+            pending_product = next((p for p in products if p["name"] == draft["pending"]), None)
+            top = 5
+            if pending_product and pending_product.get("stock") is not None:
+                top = max(1, min(5, pending_product["stock"]))  # no buttons for more than what is left
             replies = [Reply(text=t(lang, "ask_quantity", name=draft["pending"]),
-                             options=[(str(n), f"QTY:{n}") for n in range(1, 6)])]
+                             options=[(str(n), f"QTY:{n}") for n in range(1, top + 1)])]
         elif not cart or force_product:
             draft["asking"] = "product"
             if available:
@@ -554,6 +675,8 @@ class ConversationService:
 
     def _summary(self, draft: dict[str, Any], products, available):
         lang = draft.get("lang", "en")
+        if self._stock_problems(draft, products):  # _advance fixes the cart and tells the customer
+            return self._advance(draft, products, [p for p in products if p.get("is_available")])
         try:
             lines = orders.build_order_lines(self._build_request(draft, None, confirmed=False), products)
         except ValueError:
@@ -575,6 +698,9 @@ class ConversationService:
             order = orders.create_order(self._build_request(draft, sender_id, confirmed=True), client=self._client)
         except orders.OrderCreationError:
             return [self._confirm_prompt(lang, "order_failed_retry")], AWAITING, draft
+        except orders.InsufficientStockError:  # someone else took the cakes while the customer was deciding
+            fresh = self._products()
+            return self._advance(draft, fresh, [p for p in fresh if p.get("is_available")])
         except ValueError as exc:  # e.g. a cake became unavailable since the customer chose it
             logger.warning("Order rejected at confirmation: %s", type(exc).__name__)
             return [Reply(text=t(lang, "order_rejected"), options=self._start_options(lang))], IDLE, _new_draft(lang)
