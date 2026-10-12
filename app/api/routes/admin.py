@@ -81,6 +81,7 @@ def _shape_order(r: dict[str, Any]) -> dict[str, Any]:
         "fulfillment": r.get("fulfillment") or "delivery",
         "where": r["location"],
         "notes": r.get("notes") or "",
+        "dedication": r.get("dedication") or "",
         "status": r["status"],
     }
 
@@ -98,21 +99,20 @@ def list_orders(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
     def fetch(columns: str) -> list[dict[str, Any]]:
         return db.table("orders").select(columns).order("order_date", desc=True).limit(200).execute().data or []
 
-    try:
-        rows = fetch(ORDER_SELECT + ", fulfillment, notes")
-    except Exception:
-        # The Phase 3 columns are missing: run the Phase 3 SQL. Meanwhile show orders without them.
-        logger.warning("orders.fulfillment/notes not found; run the Phase 3 SQL. Retrying without them.")
+    # Newer columns may not exist yet (run the SQL for them). Meanwhile show the orders without them.
+    for extra in (", fulfillment, notes, dedication", ", fulfillment, notes", ""):
         try:
-            rows = fetch(ORDER_SELECT)
+            return [_shape_order(r) for r in fetch(ORDER_SELECT + extra)]
         except Exception:
-            logger.exception("Could not load orders")
-            raise HTTPException(status_code=502, detail="Could not load orders")
-    return [_shape_order(r) for r in rows]
+            if extra:
+                logger.warning("Order columns missing (%s); run the SQL for them. Retrying without.", extra.strip(", "))
+    logger.exception("Could not load orders")
+    raise HTTPException(status_code=502, detail="Could not load orders")
 
 
 class OrderPatch(BaseModel):
-    status: Literal["pending", "completed", "cancelled"]
+    # ready = ready for pick up. The database must allow all of these (see the order statuses SQL).
+    status: Literal["pending", "confirmed", "preparing", "ready", "out_for_delivery", "completed", "cancelled"]
 
 
 @router.patch("/api/orders/{order_id}")

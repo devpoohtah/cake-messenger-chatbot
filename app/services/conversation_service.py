@@ -15,7 +15,7 @@ from app.services import order_service as orders
 from app.services.ai_service import AIResult, AIService, AIUnavailableError, Intent
 from app.services import owner_inbox
 from app.services.faq_store import load_faqs
-from app.services.messages import t
+from app.services.messages import MESSAGES, t
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -46,6 +46,7 @@ DELIVERY_FEE = Decimal("50")  # flat fee for now; shown in the summary, not adde
 PICKUP_LOCATION = "Pickup at shop"  # stored in orders.location for pick-up orders
 MAX_CAKES_PER_ORDER = 20  # all cakes together; the per-cake cap is MAX_QUANTITY_PER_ITEM in order_service
 MAX_NOTES_LENGTH = 200
+MAX_DEDICATION_LENGTH = 80  # the message on the dedication card
 # "oo" after a price quote starts an order. Safe to be loose: it never places one.
 QUOTE_YES_WORDS = {"yes", "y", "yes po", "oo", "oo po", "huo", "huo po", "sige", "ok", "okay", "sure", "gusto", "gusto ko", "order"}
 SKIP_WORDS = {"skip", "no", "none", "nope", "wala", "wala po", "wala na", "pass", "next"}
@@ -330,6 +331,14 @@ class ConversationService:
                 if len(note) > MAX_NOTES_LENGTH:
                     return self._advance(draft, products, available, t(lang, "notes_too_long"))
                 return self._advance({**draft, "notes": note, "notes_done": True}, products, available)
+        if state == COLLECTING and draft.get("asking") == "dedication":
+            card = text.strip()
+            if words in SKIP_WORDS:
+                return self._advance({**draft, "dedication": "", "dedication_done": True}, products, available)
+            if card and not card.endswith("?"):  # a question goes to the AI instead
+                if len(card) > MAX_DEDICATION_LENGTH:
+                    return self._advance(draft, products, available, t(lang, "dedication_too_long", max=MAX_DEDICATION_LENGTH))
+                return self._advance({**draft, "dedication": card, "dedication_done": True}, products, available)
         topics = {topic: row["description"] for topic, row in load_faqs(self._client).items()}
         try:
             result = self._ai.interpret_message(text, state, [p["name"] for p in available], topics)
@@ -390,7 +399,8 @@ class ConversationService:
         if order is None:
             return [Reply(text=t(lang, "order_status_none"), options=self._start_options(lang))]
         items = "\n".join(f"• {qty} × {name}" for name, qty in order["items"])
-        status_text = t(lang, "status_" + order["status"])
+        key = "status_" + order["status"]
+        status_text = t(lang, key) if key in MESSAGES["en"] else order["status"]
         text = t(lang, "order_status", order_id=order["order_id"], items=items,
                  total=_peso(order["total_amount"]), status_text=status_text)
         return [Reply(text=text, options=self._start_options(lang))]
@@ -507,6 +517,10 @@ class ConversationService:
             if state != COLLECTING or draft.get("asking") != "notes":
                 return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
             return self._advance({**draft, "notes": "", "notes_done": True}, products, available)
+        if kind == "SKIP_DEDICATION":
+            if state != COLLECTING or draft.get("asking") != "dedication":
+                return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
+            return self._advance({**draft, "dedication": "", "dedication_done": True}, products, available)
         return None  # unknown payload (e.g. the phone-number button): handle its text instead
 
     # ---------- replies ----------
@@ -640,9 +654,13 @@ class ConversationService:
                              options=[(t(lang, "btn_delivery"), "FULFILL:delivery"), (t(lang, "btn_pickup"), "FULFILL:pickup")])]
         else:
             missing = next((f for f in CONTACT_FIELDS if not draft.get(f)), None)
-            if missing is None and draft.get("notes_done"):
+            if missing is None and draft.get("notes_done") and draft.get("dedication_done"):
                 return self._summary(draft, products, available)
-            if missing is None:
+            if missing is None and draft.get("notes_done"):
+                draft["asking"] = "dedication"
+                replies = [Reply(text=t(lang, "ask_dedication", max=MAX_DEDICATION_LENGTH),
+                                 options=[(t(lang, "btn_skip"), "SKIP_DEDICATION")])]
+            elif missing is None:
                 draft["asking"] = "notes"
                 replies = [Reply(text=t(lang, "ask_notes"), options=[(t(lang, "btn_skip"), "SKIP_NOTES")])]
             else:
@@ -664,6 +682,7 @@ class ConversationService:
             items=[{"product_name": i["product"], "quantity": i["quantity"]} for i in draft["cart"]],
             fulfillment=draft.get("fulfillment", "delivery"),
             notes=draft.get("notes") or None,
+            dedication=draft.get("dedication") or None,
             confirmed=confirmed,
         )
 
@@ -685,6 +704,8 @@ class ConversationService:
             return [Reply(text=t(lang, "invalid_order"))] + nxt[0], COLLECTING, nxt[2]
         items = "\n".join(f"• {l.quantity} × {l.product_name} — {_peso(l.subtotal)}" for l in lines)
         notes = t(lang, "notes_line", notes=draft["notes"]) if draft.get("notes") else ""
+        if draft.get("dedication"):
+            notes += t(lang, "dedication_line", card=draft["dedication"])
         text = t(lang, "summary", items=items, total=_peso(orders.calculate_total(lines)),
                  name=draft["customer_name"], contact=draft["contact_number"],
                  where=self._where_text(lang, draft), notes=notes)

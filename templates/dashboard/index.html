@@ -64,11 +64,14 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
 
   <section id="orders">
     <p><label>Show: <select id="filter">
-      <option value="all">All</option><option value="pending">Pending</option>
+      <option value="all">All</option><option value="active">In progress (not completed)</option>
+      <option value="pending">Pending</option><option value="confirmed">Confirmed</option>
+      <option value="preparing">Preparing</option><option value="ready">Ready for pick up</option>
+      <option value="out_for_delivery">Out for delivery</option>
       <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
     </select></label> <button id="refresh" type="button">Refresh</button></p>
     <div class="wrap"><table>
-      <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes</th><th>Status</th></tr></thead>
+      <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes and card</th><th>Status</th></tr></thead>
       <tbody id="orderRows"></tbody>
     </table></div>
   </section>
@@ -151,24 +154,36 @@ async function load() {
   renderStats(); renderOrders(); renderProducts();
 }
 
+const STATUS_LABELS = {pending: "Pending", confirmed: "Confirmed", preparing: "Preparing", ready: "Ready for pick up",
+  out_for_delivery: "Out for delivery", completed: "Completed", cancelled: "Cancelled"};
+const IN_PROGRESS = ["pending", "confirmed", "preparing", "ready", "out_for_delivery"];
+
+// A pick up order goes to "ready"; a delivery order goes to "out for delivery".
+function statusChoices(o) {
+  const steps = ["pending", "confirmed", "preparing", o.fulfillment === "pickup" ? "ready" : "out_for_delivery", "completed", "cancelled"];
+  return steps.includes(o.status) ? steps : [...steps, o.status];
+}
+
 function renderStats() {
   const count = s => orders.filter(o => o.status === s).length;
-  $("stats").innerHTML = [["Pending", count("pending")], ["Completed", count("completed")], ["Cancelled", count("cancelled")],
+  const active = orders.filter(o => IN_PROGRESS.includes(o.status)).length;
+  $("stats").innerHTML = [["Pending", count("pending")], ["In progress", active], ["Completed", count("completed")], ["Cancelled", count("cancelled")],
     ["Sales (completed)", peso(orders.filter(o => o.status === "completed").reduce((t, o) => t + o.total, 0))]]
     .map(([l, v]) => `<div class="card"><b>${v}</b><span>${l}</span></div>`).join("");
 }
 
 function renderOrders() {
   const f = $("filter").value;
-  $("orderRows").innerHTML = orders.filter(o => f === "all" || o.status === f).map(o => `
+  const shown = o => f === "all" || (f === "active" ? IN_PROGRESS.includes(o.status) : o.status === f);
+  $("orderRows").innerHTML = orders.filter(shown).map(o => `
     <tr>
       <td>${o.id}</td><td>${esc(o.date)}</td>
       <td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td>
       <td>${esc(o.items)}</td><td>${peso(o.total)}</td>
       <td><span class="tag">${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span><br><span class="muted">${esc(o.where)}</span></td>
-      <td>${esc(o.notes) || '<span class="muted">–</span>'}</td>
+      <td>${esc(o.notes) || '<span class="muted">–</span>'}${o.dedication ? `<br><b>Card:</b> ${esc(o.dedication)}` : ""}</td>
       <td><select onchange="setStatus(${o.id}, this.value)">
-        ${["pending", "completed", "cancelled"].map(s => `<option value="${s}" ${o.status === s ? "selected" : ""}>${s}</option>`).join("")}
+        ${statusChoices(o).map(s => `<option value="${s}" ${o.status === s ? "selected" : ""}>${STATUS_LABELS[s] || esc(s)}</option>`).join("")}
       </select></td>
     </tr>`).join("") || '<tr><td colspan="8" class="muted">No orders.</td></tr>';
 }

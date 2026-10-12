@@ -33,6 +33,7 @@ class OrderRequest(BaseModel):
     items: list[OrderItemIn] = Field(min_length=1)
     fulfillment: Literal["delivery", "pickup"] = "delivery"
     notes: str | None = None
+    dedication: str | None = None  # the message for the dedication card
     confirmed: bool = False
 
     @field_validator("notes")
@@ -41,6 +42,14 @@ class OrderRequest(BaseModel):
         v = (v or "").strip()
         if len(v) > 200:
             raise ValueError("notes must be 200 characters or fewer")
+        return v or None
+
+    @field_validator("dedication")
+    @classmethod
+    def _clean_dedication(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if len(v) > 80:
+            raise ValueError("dedication must be 80 characters or fewer")
         return v or None
 
     @field_validator("customer_name", "location")

@@ -188,6 +188,12 @@ def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreat
     except Exception:
         logger.warning("Could not save fulfillment/notes for order %s", data.get("order_id"))   
 
+    if request.dedication:
+        try:
+            client.table("orders").update({"dedication": request.dedication}).eq("order_id", data["order_id"]).execute()
+        except Exception:
+            logger.warning("Could not save the dedication for order %s; did you run the dedication SQL?", data.get("order_id"))
+
     created = OrderCreated(
         **{**data, "items": [OrderItemCreated(**i) for i in data["items"]]}
     )

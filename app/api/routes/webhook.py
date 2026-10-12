@@ -13,6 +13,15 @@ from app.core.config import get_settings
 router = APIRouter()
 logger = logging.getLogger("uvicorn.error")
 
+def _show(line: str) -> None:
+    """Chat log for the terminal. Must never break message handling (emoji can fail on some Windows consoles)."""
+    try:
+        print(line, flush=True)
+    except Exception:
+        try:
+            print(line.encode("ascii", "replace").decode(), flush=True)
+        except Exception:
+            pass
 
 @router.get("/webhook")
 def verify_webhook(
@@ -40,10 +49,22 @@ def receive_event(payload: dict[str, Any] = Body(default_factory=dict)):
     for msg in extract_text_messages(payload):
         # DEV ONLY: remove the text from logs later, it is customer data.
         logger.info("Incoming from %s: text=%r payload=%r", msg.sender_id, msg.text, msg.payload)
+        _show(f"\nCUSTOMER {msg.sender_id} >> {msg.text!r}" + (f"  [button: {msg.payload}]" if msg.payload else ""))
         messenger.send_action(msg.sender_id, "mark_seen")
         if msg.payload is None:  # typed text may wait for the AI, so show "typing..."
             messenger.send_action(msg.sender_id, "typing_on")
         replies = handle_incoming_message(msg.sender_id, msg.text, msg.message_id, msg.payload)
+        if replies is None:
+            _show("BOT >> (no reply: Meta sent this message twice)")
+        elif not replies:
+            _show("BOT >> (quiet: the owner has this customer)")
+        for r in replies or []:
+            line = r.text or ("[cake menu]" if r.products else "")
+            if r.products:
+                line += f"  [carousel: {len(r.products)} cakes]"
+            if r.options:
+                line += "  buttons: " + " | ".join(title for title, _ in r.options)
+            _show(f"BOT >> {line}")
         if not replies and msg.payload is None:  # the owner has this customer: the bot stays quiet
             messenger.send_action(msg.sender_id, "typing_off")
         deliver_replies(msg.sender_id, replies, messenger)
