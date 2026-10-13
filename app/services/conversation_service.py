@@ -13,7 +13,7 @@ from typing import Any
 from app.schemas.order import _PHONE_RE, OrderRequest
 from app.services import order_service as orders
 from app.services.ai_service import AIResult, AIService, AIUnavailableError, Intent
-from app.services import owner_inbox
+from app.services import owner_inbox, shop_hours
 from app.services.faq_store import load_faqs
 from app.services.messages import MESSAGES, t
 
@@ -601,6 +601,28 @@ class ConversationService:
             return [Reply(text=t(lang, "menu_empty"))]
         return [Reply(text=t(lang, "menu_intro"), products=available, carousel_button=t(lang, "btn_order_this"))]
 
+    def _shop_closed_reply(self, lang: str) -> Reply | None:
+        """A closed-shop notice, or None while the shop is taking orders (owner settings: see shop_hours)."""
+        status = shop_hours.current_status(self._client)
+        return None if status.is_open else self._closed_notice(lang, status)
+
+    def _hours_answer(self, lang: str) -> Reply | None:
+        """Live answer to "are you open?" from the owner's settings. None = the FAQ text answers."""
+        status = shop_hours.current_status(self._client)
+        if not status.is_open:
+            return self._closed_notice(lang, status)  # includes the reason the owner typed and when we reopen
+        if status.closes is None:  # no opening hours set in the dashboard
+            return None
+        return Reply(text=t(lang, "shop_open_until", until=shop_hours.clock(status.closes)), options=self._start_options(lang))
+
+    @staticmethod
+    def _closed_notice(lang: str, status: shop_hours.ShopStatus) -> Reply:
+        when = shop_hours.reopening_text(status)
+        text = t(lang, "shop_closed_back", when=when) if when else t(lang, "shop_closed_open_ended")
+        if status.note:
+            text += t(lang, "shop_closed_note", note=status.note)
+        return Reply(text=text, options=[(t(lang, "btn_menu"), "MENU"), (t(lang, "btn_talk_owner"), TALK_OWNER)])
+
     def _cancelled(self, lang: str):
         return [Reply(text=t(lang, "cancelled"), options=self._start_options(lang))], IDLE, _new_draft(lang)
 
@@ -629,6 +651,10 @@ class ConversationService:
         if result.intent == Intent.ORDERING_INFO:
             return [Reply(text=t(lang, "ordering_info"), options=self._start_options(lang))]
         if result.intent == Intent.FAQ_QUESTION:
+            if result.faq_topic == "hours":  # open, closed, why and until when come from the database, not the AI
+                live = self._hours_answer(lang)
+                if live is not None:
+                    return [live]
             row = load_faqs(self._client).get(result.faq_topic or "")
             answer = row and (row.get(lang) or row["en"])
             if answer:  # the answer is text YOU wrote in faq.py, never AI-generated
@@ -680,6 +706,9 @@ class ConversationService:
     def _advance(self, draft: dict[str, Any], products, available, notice: str | None = None):
         """Ask for whatever is missing next, or show the summary when everything is present."""
         lang = draft.get("lang", "en")
+        closed = self._shop_closed_reply(lang)
+        if closed is not None:  # closed day, outside opening hours or switched off: no new orders
+            return [closed], IDLE, _new_draft(lang)
         draft, stock_notice = self._fit_cart_to_stock({**draft}, products, lang)
         if stock_notice:
             notice = f"{notice} {stock_notice}" if notice else stock_notice
@@ -900,6 +929,9 @@ class ConversationService:
 
     def _place_order(self, sender_id: str, draft: dict[str, Any], products):
         lang = draft.get("lang", "en")
+        closed = self._shop_closed_reply(lang)
+        if closed is not None:  # the shop closed while the customer was deciding: nothing is saved
+            return [closed], IDLE, _new_draft(lang)
         try:
             order = orders.create_order(self._build_request(draft, sender_id, confirmed=True), client=self._client)
         except orders.OrderCreationError:

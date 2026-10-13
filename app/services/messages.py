@@ -8,6 +8,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_order_this": "Order this",
         "menu_intro": "Here are our cakes:",
         "menu_empty": "Sorry, no cakes are available right now.",
+        "shop_closed_back": "Sorry, we're closed right now and not taking orders. We'll be open again on {when}. You can still look at our menu or talk to the owner.",
+        "shop_closed_open_ended": "Sorry, we're not taking orders right now. Please check back later. You can still look at our menu or talk to the owner.",
+        "shop_closed_note": "\nNote from the owner: {note}",
+        "shop_open_until": "Yes, we're open right now and taking orders until {until} today.",
         "price_line": "{name} — {price}{desc}\n\nWould you like to order?",
         "product_unavailable": "Sorry, {name} is currently unavailable.",
         
@@ -107,6 +111,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_order_this": "Order ito",
         "menu_intro": "Ito po ang aming mga cake:",
         "menu_empty": "Pasensya na po, walang available na cake ngayon.",
+        "shop_closed_back": "Pasensya na po, sarado kami ngayon at hindi muna tumatanggap ng order. Bukas ulit kami sa {when}. Pwede pa ring tingnan ang menu o kausapin ang owner.",
+        "shop_closed_open_ended": "Pasensya na po, hindi muna kami tumatanggap ng order ngayon. Subukan ulit mamaya. Pwede pa ring tingnan ang menu o kausapin ang owner.",
+        "shop_closed_note": "\nPaalala mula sa owner: {note}",
+        "shop_open_until": "Opo, bukas kami ngayon at tumatanggap ng order hanggang {until} ngayong araw.",
         "price_line": "{name} — {price}{desc}\n\nGusto ninyo po bang umorder?",
         "product_unavailable": "Pasensya na po, hindi available ang {name} ngayon.",
         "ordering_info": (
@@ -203,6 +211,10 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_order_this": "I-order ini",
         "menu_intro": "Ari ang amon mga cake:",
         "menu_empty": "Pasensya na, wala sing available nga cake subong.",
+        "shop_closed_back": "Pasensya na, sirado kami subong kag wala kami nagadawat sang order. Magabukas kami liwat sa {when}. Pwede pa gihapon makita ang menu ukon makigsulti sa owner.",
+        "shop_closed_open_ended": "Pasensya na, wala kami nagadawat sang order subong. Palihog balik-balik sa ulihi. Pwede pa gihapon makita ang menu ukon makigsulti sa owner.",
+        "shop_closed_note": "\nMensahe halin sa owner: {note}",
+        "shop_open_until": "Huo, bukas kami subong kag nagadawat sang order tubtob {until} subong nga adlaw.",
         "price_line": "{name} — {price}{desc}\n\nLuyag mo bala mag-order?",
         "product_unavailable": "Pasensya na, indi available ang {name} subong.",
         "ordering_info": (

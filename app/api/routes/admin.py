@@ -8,7 +8,7 @@ import logging
 import re
 import secrets
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -19,7 +19,7 @@ from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.config import get_settings
-from app.services import faq_store, owner_inbox
+from app.services import faq_store, owner_inbox, shop_hours
 from app.services.faq import FAQS as DEFAULT_FAQS
 
 logger = logging.getLogger("uvicorn.error")
@@ -525,3 +525,160 @@ def resolve_inbox_item(item_id: int, db: Any = Depends(get_db)) -> dict[str, Any
         return {"id": item_id, "status": "resolved"}
     owner_inbox.resolve(db, item_id, "owner", back_notice=existing[0]["kind"] == "handoff")
     return {"id": item_id, "status": "resolved"}
+
+
+# ---------- shop hours, locked days and the order calendar ----------
+ORDER_EXTRAS = (", fulfillment, notes, dedication, delivery_area, delivery_fee", ", fulfillment, notes, dedication", ", fulfillment, notes", "")
+MONTH_RE = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
+SHOP_SQL_HINT = "Could not read the shop hours. Run the shop hours SQL (section 3 of supabase/schema.sql) first."
+
+
+def _ph_bounds(first: date, after: date) -> tuple[str, str]:
+    """[first, after) as UTC timestamps, where both dates are Philippine calendar days."""
+    lo = datetime(first.year, first.month, first.day, tzinfo=PH_TIME)
+    hi = datetime(after.year, after.month, after.day, tzinfo=PH_TIME)
+    return lo.astimezone(timezone.utc).isoformat(), hi.astimezone(timezone.utc).isoformat()
+
+
+def _ph_day(value: str | None) -> str | None:
+    try:
+        return datetime.fromisoformat(value).astimezone(PH_TIME).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
+def _hhmm(value: Any, fallback: str) -> str:
+    parsed = shop_hours.parse_time(value)
+    return parsed.strftime("%H:%M") if parsed else fallback
+
+
+def _shop_out(db: Any) -> dict[str, Any]:
+    try:
+        rows = db.table("shop_settings").select("*").eq("id", 1).limit(1).execute().data or []
+    except Exception:
+        logger.exception("Could not read shop_settings")
+        raise HTTPException(status_code=502, detail=SHOP_SQL_HINT)
+    row = rows[0] if rows else {}
+    now = datetime.now(PH_TIME)
+    status = shop_hours.current_status(db, now)
+    return {
+        "is_open": row.get("is_open", True) is not False,
+        "hours_enabled": bool(row.get("hours_enabled")),
+        "open_time": _hhmm(row.get("open_time"), "08:00"),
+        "close_time": _hhmm(row.get("close_time"), "20:00"),
+        "accepting_orders": status.is_open,
+        "closed_because": status.reason,
+        "now": now.strftime("%Y-%m-%d %H:%M"),
+    }
+
+
+@router.get("/api/shop")
+def get_shop(db: Any = Depends(get_db)) -> dict[str, Any]:
+    return _shop_out(db)
+
+
+class ShopPatch(BaseModel):
+    is_open: bool | None = None
+    hours_enabled: bool | None = None
+    open_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")  # HH:MM, Philippine time
+    close_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+
+
+@router.patch("/api/shop")
+def update_shop(body: ShopPatch, db: Any = Depends(get_db)) -> dict[str, Any]:
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not changes:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    current = _shop_out(db)
+    merged = {**current, **changes}
+    if merged["close_time"] <= merged["open_time"]:  # HH:MM strings compare correctly; the table requires it too
+        raise HTTPException(status_code=400, detail="Closing time must be later than opening time")
+    try:
+        db.table("shop_settings").upsert(
+            {"id": 1, **changes, "updated_at": datetime.now(timezone.utc).isoformat()}, on_conflict="id"
+        ).execute()
+    except Exception:
+        logger.exception("Could not save the shop hours")
+        raise HTTPException(status_code=502, detail="Could not save the shop hours")
+    return _shop_out(db)
+
+
+@router.get("/api/calendar")
+def calendar_month(month: str, db: Any = Depends(get_db)) -> dict[str, Any]:
+    """Per day of the month: how many orders were placed (not cancelled) and whether the day is locked."""
+    if not MONTH_RE.match(month):
+        raise HTTPException(status_code=400, detail="Month must look like 2026-10")
+    year, mon = int(month[:4]), int(month[5:])
+    first = date(year, mon, 1)
+    after = date(year + (mon == 12), mon % 12 + 1, 1)
+    lo, hi = _ph_bounds(first, after)
+    try:
+        order_rows = db.table("orders").select("order_id, order_date, status").gte("order_date", lo).lt("order_date", hi).limit(5000).execute().data or []
+        locked_rows = db.table("closed_days").select("day, reason").gte("day", first.isoformat()).lt("day", after.isoformat()).execute().data or []
+    except Exception:
+        logger.exception("Could not load the calendar")
+        raise HTTPException(status_code=502, detail=SHOP_SQL_HINT)
+    days: dict[str, dict[str, Any]] = {}
+    for r in order_rows:
+        key = _ph_day(r.get("order_date"))
+        if key and r.get("status") != "cancelled":
+            days.setdefault(key, {"orders": 0, "locked": False, "reason": ""})["orders"] += 1
+    for r in locked_rows:
+        entry = days.setdefault(r["day"], {"orders": 0, "locked": False, "reason": ""})
+        entry["locked"], entry["reason"] = True, r.get("reason") or ""
+    return {"month": month, "days": days}
+
+
+@router.get("/api/calendar/{day}")
+def calendar_day(day: date, db: Any = Depends(get_db)) -> dict[str, Any]:
+    """The orders placed on one day (Philippine time) and whether that day is locked."""
+    lo, hi = _ph_bounds(day, day + timedelta(days=1))
+
+    def fetch(columns: str) -> list[dict[str, Any]]:
+        return db.table("orders").select(columns).gte("order_date", lo).lt("order_date", hi).order("order_date").execute().data or []
+
+    shaped = None
+    for extra in ORDER_EXTRAS:  # newer columns may not exist yet, like in the Orders tab
+        try:
+            shaped = [_shape_order(r) for r in fetch(ORDER_SELECT + extra)]
+            break
+        except Exception:
+            if extra:
+                logger.warning("Order columns missing (%s); retrying without.", extra.strip(", "))
+    if shaped is None:
+        logger.exception("Could not load the orders of %s", day)
+        raise HTTPException(status_code=502, detail="Could not load the orders")
+    try:
+        locked = db.table("closed_days").select("day, reason").eq("day", day.isoformat()).limit(1).execute().data or []
+    except Exception:
+        logger.exception("Could not read closed_days")
+        raise HTTPException(status_code=502, detail=SHOP_SQL_HINT)
+    return {"day": day.isoformat(), "locked": bool(locked), "reason": (locked[0].get("reason") or "") if locked else "", "orders": shaped}
+
+
+class LockIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    reason: str | None = Field(default=None, max_length=60)  # shown to customers while the day is locked
+
+
+@router.put("/api/closed-days/{day}")
+def lock_day(day: date, body: LockIn | None = None, db: Any = Depends(get_db)) -> dict[str, Any]:
+    if day < datetime.now(PH_TIME).date():
+        raise HTTPException(status_code=400, detail="That day has already passed")
+    reason = (body.reason if body else None) or None
+    try:
+        db.table("closed_days").upsert({"day": day.isoformat(), "reason": reason}, on_conflict="day").execute()
+    except Exception:
+        logger.exception("Could not lock %s", day)
+        raise HTTPException(status_code=502, detail="Could not lock the day")
+    return {"day": day.isoformat(), "locked": True, "reason": reason or ""}
+
+
+@router.delete("/api/closed-days/{day}")
+def unlock_day(day: date, db: Any = Depends(get_db)) -> dict[str, Any]:
+    try:
+        db.table("closed_days").delete().eq("day", day.isoformat()).execute()
+    except Exception:
+        logger.exception("Could not unlock %s", day)
+        raise HTTPException(status_code=502, detail="Could not unlock the day")
+    return {"day": day.isoformat(), "locked": False, "reason": ""}

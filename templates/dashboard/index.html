@@ -46,6 +46,24 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
 .cakeform button,.photo-btn{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
 .soldout{color:var(--bad);font-weight:600;font-size:12px}
 .inbox-actions button{padding:5px 10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer;margin:0 4px 4px 0}
+.calhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.calhead b{min-width:160px;text-align:center}
+.calhead button,.shopbtn,#lockBtn{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
+.calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
+.cal-dow{font-size:12px;color:var(--muted);text-align:center;text-transform:uppercase}
+.cal-day{position:relative;min-height:64px;padding:6px;text-align:left;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);cursor:pointer;font:inherit}
+.cal-day.past{opacity:.55}
+.cal-day.today{outline:2px solid var(--accent)}
+.cal-day.locked{background:rgba(185,28,28,.12);border-color:var(--bad)}
+.cal-day.sel{box-shadow:0 0 0 2px var(--accent) inset}
+.cal-day .lock{position:absolute;top:4px;right:6px;line-height:0;color:var(--bad)}
+.cal-day .n{display:block;margin-top:6px;font-size:12px;color:var(--muted)}
+.shoprow{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:10px}
+.shoprow label{font-size:13px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--ok)}
+.dot.off{background:var(--bad)}
+#dayTitle svg{vertical-align:-2px;color:var(--bad)}
+#lockBtn.is-locked{border-color:var(--bad);color:var(--bad)}
 </style>
 </head>
 <body>
@@ -56,11 +74,11 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
   <p id="ok" style="color:var(--ok)"></p>
   <nav>
     <button class="on" data-tab="orders">Orders</button>
+    <button data-tab="calendar">Calendar</button>
     <button data-tab="products">Products</button>
     <button data-tab="faq">FAQ</button>
     <button data-tab="delivery">Delivery</button>
     <button data-tab="inbox" id="inboxTab">Questions</button>
-    <button disabled title="Coming later">Delivery areas</button>
   </nav>
 
   <section id="orders">
@@ -75,6 +93,43 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
       <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes and card</th><th>Status</th></tr></thead>
       <tbody id="orderRows"></tbody>
     </table></div>
+  </section>
+
+  <section id="calendar" class="hidden">
+    <div class="card">
+      <h3>Taking orders</h3>
+      <p id="shopState" class="muted"></p>
+      <div class="shoprow">
+        <button type="button" class="shopbtn" id="shopSwitch"></button>
+        <label><input type="checkbox" id="hoursOn"> Use opening hours</label>
+        <label>Opens <input type="time" id="openTime" value="08:00"></label>
+        <label>Closes <input type="time" id="closeTime" value="20:00"></label>
+        <button type="button" class="shopbtn" id="saveHours">Save hours</button>
+      </div>
+      <p class="muted">Times are Philippine time. Outside these hours, or on a locked day, the bot still answers questions and shows the menu but won't start or confirm an order.
+        Change the closing time any time to close early or late, or use the switch to stop orders right now.</p>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="calhead">
+        <button type="button" id="calPrev" aria-label="Previous month">&lsaquo;</button>
+        <b id="calTitle"></b>
+        <button type="button" id="calNext" aria-label="Next month">&rsaquo;</button>
+        <button type="button" id="calToday">Today</button>
+      </div>
+      <div class="calgrid" id="calGrid"></div>
+      <p class="muted">Click a day to see its orders and to lock it. <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="lock" style="vertical-align:-2px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> = locked (the shop is closed all day). Order counts are by the day the order was placed; cancelled orders are not counted.</p>
+    </div>
+    <div class="card hidden" id="dayPanel" style="margin-top:12px">
+      <h3 id="dayTitle"></h3>
+      <div class="shoprow">
+        <button type="button" id="lockBtn"></button>
+        <label>Note shown to customers (optional)<br><input id="lockReason" maxlength="60" placeholder="Holiday, family event…" style="width:260px"></label>
+      </div>
+      <div class="wrap" style="margin-top:12px"><table>
+        <thead><tr><th>#</th><th>Time</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
+        <tbody id="dayRows"></tbody>
+      </table></div>
+    </div>
   </section>
 
   <section id="products" class="hidden">
@@ -480,12 +535,98 @@ async function setOrderFee(id) {
   await load();
 }
 
-const TABS = ["orders", "products", "faq", "delivery", "inbox"];
+// ---------- Calendar: shop hours, locked days, orders per day ----------
+let calMonth = null, calData = {days: {}}, calSelected = null, shop = null, dayInfo = null;
+const todayPH = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);  // Manila date, whatever the browser's timezone
+const LOCK_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
+const UNLOCK_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>';
+const CLOSED_WHY = {switch: "the master switch is off", day: "today is locked", hours: "it is outside opening hours"};
+
+async function loadCalendar() {
+  if (!calMonth) calMonth = todayPH().slice(0, 7);
+  try { [shop, calData] = await Promise.all([api("shop"), api("calendar?month=" + calMonth)]); }
+  catch (e) { showError(e); return; }
+  renderShop(); renderCalendar();
+  if (calSelected) loadDay(calSelected);
+}
+
+function renderShop() {
+  $("shopState").innerHTML = `<span class="dot ${shop.accepting_orders ? "" : "off"}"></span>` + (shop.accepting_orders ? "The bot is taking orders" : "The bot is NOT taking orders (" + (CLOSED_WHY[shop.closed_because] || "closed") + ")") + " · Manila time " + shop.now;
+  $("shopSwitch").textContent = shop.is_open ? "Stop taking orders now" : "Start taking orders";
+  $("hoursOn").checked = shop.hours_enabled;
+  $("openTime").value = shop.open_time; $("closeTime").value = shop.close_time;
+}
+
+function renderCalendar() {
+  const [y, m] = calMonth.split("-").map(Number), today = todayPH();
+  $("calTitle").textContent = new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", {month: "long", year: "numeric", timeZone: "UTC"});
+  const offset = new Date(Date.UTC(y, m - 1, 1)).getUTCDay(), count = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  let html = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map(d => `<div class="cal-dow">${d}</div>`).join("") + "<div></div>".repeat(offset);
+  for (let d = 1; d <= count; d++) {
+    const key = calMonth + "-" + String(d).padStart(2, "0"), info = calData.days[key] || {orders: 0, locked: false};
+    const cls = ["cal-day", key === today ? "today" : "", key < today ? "past" : "", info.locked ? "locked" : "", key === calSelected ? "sel" : ""].join(" ");
+    html += `<button type="button" class="${cls}" data-day="${key}"><span>${d}</span>${info.locked ? `<span class="lock" title="Locked: closed all day">${LOCK_SVG}</span>` : ""}` +
+      `${info.orders ? `<span class="n">${info.orders} order${info.orders > 1 ? "s" : ""}</span>` : ""}</button>`;
+  }
+  $("calGrid").innerHTML = html;
+  $("calGrid").querySelectorAll("button[data-day]").forEach(b => b.onclick = () => { calSelected = b.dataset.day; renderCalendar(); loadDay(calSelected); });
+}
+
+async function loadDay(key) {
+  try { dayInfo = await api("calendar/" + key); } catch (e) { showError(e); return; }
+  if (key !== calSelected) return;  // the owner clicked another day meanwhile
+  const past = key < todayPH();
+  $("dayPanel").classList.remove("hidden");
+  $("dayTitle").innerHTML = new Date(key + "T00:00:00Z").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", timeZone: "UTC"}) + (dayInfo.locked ? " " + LOCK_SVG : "");
+  $("lockBtn").innerHTML = dayInfo.locked ? UNLOCK_SVG : LOCK_SVG;
+  $("lockBtn").title = dayInfo.locked ? "Unlock this day" : "Lock this day (close the shop)";
+  $("lockBtn").setAttribute("aria-label", $("lockBtn").title);
+  $("lockBtn").classList.toggle("is-locked", dayInfo.locked);
+  $("lockBtn").disabled = past && !dayInfo.locked;
+  $("lockReason").value = dayInfo.reason; $("lockReason").disabled = dayInfo.locked || past;
+  $("dayRows").innerHTML = dayInfo.orders.map(o => `<tr><td>${o.id}</td><td>${esc(o.date.slice(11))}</td>` +
+    `<td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td><td>${esc(o.items)}</td><td>${peso(o.total)}</td>` +
+    `<td>${STATUS_LABELS[o.status] || esc(o.status)}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">No orders placed on this day.</td></tr>';
+}
+
+async function toggleLock() {
+  showError(null);
+  if (!calSelected || !dayInfo) return;
+  const key = calSelected;
+  try {
+    if (dayInfo.locked) await api("closed-days/" + key, {method: "DELETE"});
+    else await api("closed-days/" + key, {method: "PUT", body: JSON.stringify({reason: $("lockReason").value.trim() || null})});
+  } catch (e) { showError(e); return; }
+  showOk(dayInfo.locked ? "Day unlocked." : "Day locked. The bot won't take orders that day.");
+  await loadCalendar();
+}
+
+async function saveShop(body, message) {
+  showError(null);
+  try { shop = await api("shop", {method: "PATCH", body: JSON.stringify(body)}); }
+  catch (e) { showError(e); return; }
+  showOk(message); renderShop();
+}
+
+function moveMonth(delta) {
+  const [y, m] = calMonth.split("-").map(Number), d = new Date(Date.UTC(y, m - 1 + delta, 1));
+  calMonth = d.getUTCFullYear() + "-" + String(d.getUTCMonth() + 1).padStart(2, "0");
+  calSelected = null; $("dayPanel").classList.add("hidden"); loadCalendar();
+}
+
+const TABS = ["orders", "calendar", "products", "faq", "delivery", "inbox"];
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
   TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
 });
 $("filter").onchange = renderOrders;
+document.querySelector('nav button[data-tab="calendar"]').addEventListener("click", loadCalendar);
+$("calPrev").onclick = () => moveMonth(-1);
+$("calNext").onclick = () => moveMonth(1);
+$("calToday").onclick = () => { calMonth = todayPH().slice(0, 7); calSelected = todayPH(); loadCalendar(); };
+$("lockBtn").onclick = toggleLock;
+$("shopSwitch").onclick = () => saveShop({is_open: !shop.is_open}, shop.is_open ? "Orders stopped." : "Orders started.");
+$("saveHours").onclick = () => saveShop({hours_enabled: $("hoursOn").checked, open_time: $("openTime").value, close_time: $("closeTime").value}, "Hours saved.");
 $("refresh").onclick = () => { showError(null); load(); };
 $("addFaqBtn").onclick = addFaq;
 $("addCakeBtn").onclick = addCake;

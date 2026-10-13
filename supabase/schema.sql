@@ -304,3 +304,26 @@ where not exists (select 1 from public.delivery_areas where is_other);
 alter table public.orders add column if not exists delivery_area text;
 alter table public.orders add column if not exists delivery_fee numeric(10,2)
   check (delivery_fee is null or delivery_fee >= 0);
+
+-- 3) Shop hours and locked days (Calendar tab). The bot reads these before it starts or confirms an order.
+--    shop_settings has exactly one row. is_open is the master switch; hours_enabled turns the daily
+--    opening hours on or off (times are Philippine time). A day in closed_days is locked for the whole day.
+create table if not exists public.shop_settings (
+  id            int primary key default 1,
+  is_open       boolean not null default true,
+  hours_enabled boolean not null default false,
+  open_time     time not null default '08:00',
+  close_time    time not null default '20:00',
+  updated_at    timestamptz not null default now(),
+  constraint shop_settings_single_row check (id = 1),
+  constraint shop_settings_hours_valid check (close_time > open_time)
+);
+insert into public.shop_settings (id) values (1) on conflict (id) do nothing;
+alter table public.shop_settings enable row level security;
+
+create table if not exists public.closed_days (
+  day        date primary key,
+  reason     text check (reason is null or length(reason) <= 60),
+  created_at timestamptz not null default now()
+);
+alter table public.closed_days enable row level security;

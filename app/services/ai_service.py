@@ -73,7 +73,7 @@ Examples:
 - "magkano ang leche flan" and "tag-pila ang leche flan" are price_question
 - "gusto ko mag-order" is start_order
 - "cash lang ba?" and "pwede ba GCash?" are faq_question about payment
-- "anong oras kayo bukas" is faq_question about opening hours
+- "anong oras kayo bukas", "are you open today?", "bukas ba kayo ngayon?", "open pa ba kayo?" and "why are you closed?" are faq_question about opening hours
 - "do you sell coffee?", "may bread ba kayo?", "may kape kamo?" and "do you have red velvet?" are not_sold
 - "nagbebenta kayo ng cake?", "ano baligya mo?" and "what cakes do you have?" are product_question
 - "how are you?", "kumusta ka na?" and "tell me a joke" are small_talk
