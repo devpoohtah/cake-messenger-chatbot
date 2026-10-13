@@ -58,6 +58,7 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
     <button class="on" data-tab="orders">Orders</button>
     <button data-tab="products">Products</button>
     <button data-tab="faq">FAQ</button>
+    <button data-tab="delivery">Delivery</button>
     <button data-tab="inbox" id="inboxTab">Questions</button>
     <button disabled title="Coming later">Delivery areas</button>
   </nav>
@@ -112,6 +113,24 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
         <textarea id="newHil" rows="3" maxlength="1000"></textarea></label>
       <button type="button" id="addFaqBtn">Add topic</button>
     </div>
+  </section>
+
+  <section id="delivery" class="hidden">
+    <div class="card">
+      <h3>Add a delivery area</h3>
+      <div class="cakeform">
+        <label>City or municipality<input id="newAreaName" maxlength="20" placeholder="Iloilo City"></label>
+        <label>Delivery fee (₱)<input id="newAreaFee" type="number" min="0" step="1" placeholder="50"></label>
+        <button id="addAreaBtn" type="button">Add area</button>
+      </div>
+      <p class="muted">Customers who choose delivery pick their area from these buttons (at most 12 active areas, names up to 20 characters) and the fee is added to their total.
+        <b>Other areas</b> lets a customer type an area that isn't listed; the fee then stays <b>to be confirmed</b> and you set it in the Orders tab before confirming the order.
+        Switch Other areas off to deliver only to the listed areas. With no areas switched on, the bot charges its flat ₱50 fee.</p>
+    </div>
+    <div class="wrap"><table>
+      <thead><tr><th>Area</th><th>Delivery fee (₱)</th><th>Active</th><th></th></tr></thead>
+      <tbody id="areaRows"></tbody>
+    </table></div>
   </section>
 
   <section id="inbox" class="hidden">
@@ -180,7 +199,12 @@ function renderOrders() {
       <td>${o.id}</td><td>${esc(o.date)}</td>
       <td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td>
       <td>${esc(o.items)}</td><td>${peso(o.total)}</td>
-      <td><span class="tag">${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span><br><span class="muted">${esc(o.where)}</span></td>
+      <td><span class="tag">${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span>${o.delivery_area ? ` <b>${esc(o.delivery_area)}</b>` : ""}
+        <br><span class="muted">${esc(o.where)}</span>
+        ${o.delivery_fee !== null && o.fulfillment !== "pickup" ? `<br>Delivery fee: ${peso(o.delivery_fee)}` : ""}
+        ${o.fee_pending ? `<br><span class="wants">Fee to confirm</span><br>
+          <input type="number" id="fee-${o.id}" min="0" step="1" placeholder="₱" style="width:80px">
+          <button type="button" class="photo-btn" onclick="setOrderFee(${o.id})">Set fee</button>` : ""}</td>
       <td>${esc(o.notes) || '<span class="muted">–</span>'}${o.dedication ? `<br><b>Card:</b> ${esc(o.dedication)}` : ""}</td>
       <td><select onchange="setStatus(${o.id}, this.value)">
         ${statusChoices(o).map(s => `<option value="${s}" ${o.status === s ? "selected" : ""}>${STATUS_LABELS[s] || esc(s)}</option>`).join("")}
@@ -395,7 +419,68 @@ function makeFaq(id) {  // jump to the FAQ tab with the question filled in; the 
   showOk("Fill in a topic name and the answer, then press Add topic. Dismiss the question afterwards.");
 }
 
-const TABS = ["orders", "products", "faq", "inbox"];
+// Delivery areas and the fee of an order whose area is not on the list.
+let areas = [];
+async function loadAreas() {
+  try { areas = await api("areas"); }
+  catch (e) { showError(e); return; }
+  renderAreas();
+}
+
+function renderAreas() {
+  $("areaRows").innerHTML = areas.map(a => `
+    <tr>
+      <td>${esc(a.name)}${a.is_other ? '<br><span class="muted">a customer types an area that is not listed</span>' : ""}</td>
+      <td>${a.is_other ? '<span class="muted">you confirm the fee for each order</span>'
+        : `<input type="number" value="${a.fee}" min="0" step="1" style="width:90px" onchange="setAreaFee(${a.id}, this.value)">`}</td>
+      <td><input type="checkbox" ${a.is_active ? "checked" : ""} onchange="setAreaActive(${a.id}, this.checked)"></td>
+      <td>${a.is_other ? "" : `<button type="button" class="photo-btn" onclick="deleteArea(${a.id}, ${JSON.stringify(a.name).replace(/"/g, "&quot;")})">Delete</button>`}</td>
+    </tr>`).join("") || '<tr><td colspan="4" class="muted">No areas yet.</td></tr>';
+}
+
+async function saveArea(id, body) {
+  showError(null);
+  try { await api("areas/" + id, {method: "PATCH", body: JSON.stringify(body)}); }
+  catch (e) { showError(e); }
+  await loadAreas();
+}
+function setAreaFee(id, value) {
+  const fee = Number(value);
+  if (value === "" || !Number.isFinite(fee) || fee < 0) { showError(new Error("Enter a valid fee.")); return loadAreas(); }
+  return saveArea(id, {fee});
+}
+function setAreaActive(id, active) { return saveArea(id, {is_active: active}); }
+async function deleteArea(id, name) {
+  if (!confirm("Delete " + name + "? Old orders keep their saved area.")) return;
+  showError(null);
+  try { await api("areas/" + id, {method: "DELETE"}); }
+  catch (e) { showError(e); }
+  await loadAreas();
+}
+async function addArea() {
+  showError(null);
+  const name = $("newAreaName").value.trim(), fee = Number($("newAreaFee").value);
+  if (!name) return showError(new Error("Enter the city or municipality."));
+  if ($("newAreaFee").value === "" || !Number.isFinite(fee) || fee < 0) return showError(new Error("Enter a valid delivery fee."));
+  try {
+    await api("areas", {method: "POST", body: JSON.stringify({name, fee})});
+    $("newAreaName").value = ""; $("newAreaFee").value = "";
+    showOk("Area added.");
+  } catch (e) { showError(e); }
+  await loadAreas();
+}
+
+async function setOrderFee(id) {
+  showError(null);
+  const box = $("fee-" + id), fee = Number(box.value);
+  if (box.value === "" || !Number.isFinite(fee) || fee < 0) return showError(new Error("Enter the delivery fee."));
+  try { await api("orders/" + id + "/fee", {method: "PATCH", body: JSON.stringify({fee})}); }
+  catch (e) { showError(e); return; }
+  showOk("Fee saved. The order total now includes it.");
+  await load();
+}
+
+const TABS = ["orders", "products", "faq", "delivery", "inbox"];
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
   TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
@@ -404,11 +489,13 @@ $("filter").onchange = renderOrders;
 $("refresh").onclick = () => { showError(null); load(); };
 $("addFaqBtn").onclick = addFaq;
 $("addCakeBtn").onclick = addCake;
+$("addAreaBtn").onclick = addArea;
 $("inboxFilter").onchange = renderInbox;
 $("inboxRefresh").onclick = () => { showError(null); loadInbox(); };
 load();
 loadFaqs();
 loadInbox();
+loadAreas();
 setInterval(loadInbox, 30000);  // a customer waiting for the owner shows up while this page is open
 </script>
 </body>

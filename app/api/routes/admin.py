@@ -9,6 +9,7 @@ import re
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
@@ -82,6 +83,10 @@ def _shape_order(r: dict[str, Any]) -> dict[str, Any]:
         "where": r["location"],
         "notes": r.get("notes") or "",
         "dedication": r.get("dedication") or "",
+        "delivery_area": r.get("delivery_area") or "",
+        "delivery_fee": float(r["delivery_fee"]) if r.get("delivery_fee") is not None else None,
+        # a delivery order with an area but no fee yet: the owner still has to confirm the fee
+        "fee_pending": r.get("fulfillment") == "delivery" and bool(r.get("delivery_area")) and r.get("delivery_fee") is None,
         "status": r["status"],
     }
 
@@ -100,7 +105,7 @@ def list_orders(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
         return db.table("orders").select(columns).order("order_date", desc=True).limit(200).execute().data or []
 
     # Newer columns may not exist yet (run the SQL for them). Meanwhile show the orders without them.
-    for extra in (", fulfillment, notes, dedication", ", fulfillment, notes", ""):
+    for extra in (", fulfillment, notes, dedication, delivery_area, delivery_fee", ", fulfillment, notes, dedication", ", fulfillment, notes", ""):
         try:
             return [_shape_order(r) for r in fetch(ORDER_SELECT + extra)]
         except Exception:
@@ -352,6 +357,133 @@ def load_default_faqs(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
     db.table("faqs").insert(rows).execute()
     faq_store.clear_cache()
     return [{k: r[k] for k in ("topic", "description", "answer_en", "answer_tl", "answer_hil")} for r in rows]
+
+
+# ---------- Delivery areas and fees ----------
+MAX_ACTIVE_AREAS = 12  # Messenger shows at most 13 buttons: up to 12 areas plus "Other area"
+AREA_NAME_MAX = 20  # a Messenger button title has at most 20 characters
+
+
+def _area_out(r: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "fee": float(r["fee"]) if r.get("fee") is not None else None,  # None = the owner confirms the fee
+        "is_active": bool(r["is_active"]),
+        "is_other": bool(r["is_other"]),
+    }
+
+
+def _load_areas(db: Any) -> list[dict[str, Any]]:
+    try:
+        return db.table("delivery_areas").select("*").order("id").execute().data or []
+    except Exception:
+        logger.exception("Could not load delivery areas")
+        raise HTTPException(status_code=502, detail="Could not load the delivery areas. Did you run the delivery areas SQL?")
+
+
+@router.get("/api/areas")
+def list_areas(db: Any = Depends(get_db)) -> list[dict[str, Any]]:
+    rows = _load_areas(db)
+    rows.sort(key=lambda r: (bool(r["is_other"]), r["id"]))  # "Other areas" last
+    return [_area_out(r) for r in rows]
+
+
+class AreaIn(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str = Field(min_length=1, max_length=AREA_NAME_MAX)
+    fee: float = Field(ge=0, le=10000)
+
+
+@router.post("/api/areas")
+def create_area(body: AreaIn, db: Any = Depends(get_db)) -> dict[str, Any]:
+    rows = _load_areas(db)
+    if any(r["name"].strip().lower() == body.name.lower() for r in rows):
+        raise HTTPException(status_code=409, detail="That area is already in the list")
+    if sum(1 for r in rows if r["is_active"] and not r["is_other"]) >= MAX_ACTIVE_AREAS:
+        raise HTTPException(status_code=409, detail=f"You can have at most {MAX_ACTIVE_AREAS} active areas. Switch one off first.")
+    try:
+        created = db.table("delivery_areas").insert(
+            {"name": body.name, "fee": round(body.fee, 2), "is_active": True, "is_other": False}
+        ).execute().data
+    except Exception:
+        logger.exception("Could not save the delivery area")
+        raise HTTPException(status_code=502, detail="Could not save the area")
+    return _area_out(created[0])
+
+
+class AreaPatch(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: str | None = Field(default=None, min_length=1, max_length=AREA_NAME_MAX)
+    fee: float | None = Field(default=None, ge=0, le=10000)
+    is_active: bool | None = None
+
+
+@router.patch("/api/areas/{area_id}")
+def update_area(area_id: int, body: AreaPatch, db: Any = Depends(get_db)) -> dict[str, Any]:
+    changes = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not changes:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    rows = _load_areas(db)
+    area = next((r for r in rows if r["id"] == area_id), None)
+    if area is None:
+        raise HTTPException(status_code=404, detail="Area not found")
+    if area["is_other"] and ("fee" in changes or "name" in changes):
+        raise HTTPException(status_code=400, detail="For other areas the owner confirms the fee, so there is nothing to edit here")
+    if "name" in changes and any(r["id"] != area_id and r["name"].strip().lower() == changes["name"].lower() for r in rows):
+        raise HTTPException(status_code=409, detail="That area is already in the list")
+    if changes.get("is_active") and not area["is_other"] and not area["is_active"]:
+        if sum(1 for r in rows if r["is_active"] and not r["is_other"]) >= MAX_ACTIVE_AREAS:
+            raise HTTPException(status_code=409, detail=f"You can have at most {MAX_ACTIVE_AREAS} active areas. Switch one off first.")
+    if "fee" in changes:
+        changes["fee"] = round(changes["fee"], 2)
+    try:
+        updated = db.table("delivery_areas").update(changes).eq("id", area_id).execute().data
+    except Exception:
+        logger.exception("Could not update delivery area %s", area_id)
+        raise HTTPException(status_code=502, detail="Could not save the change")
+    return _area_out(updated[0])
+
+
+@router.delete("/api/areas/{area_id}")
+def delete_area(area_id: int, db: Any = Depends(get_db)) -> dict[str, Any]:
+    area = next((r for r in _load_areas(db) if r["id"] == area_id), None)
+    if area is None:
+        raise HTTPException(status_code=404, detail="Area not found")
+    if area["is_other"]:
+        raise HTTPException(status_code=400, detail="Switch it off instead of deleting it")
+    db.table("delivery_areas").delete().eq("id", area_id).execute()  # old orders keep the area name they saved
+    return {"id": area_id, "deleted": True}
+
+
+class FeeIn(BaseModel):
+    fee: float = Field(ge=0, le=100000)
+
+
+@router.patch("/api/orders/{order_id}/fee")
+def set_order_fee(order_id: int, body: FeeIn, db: Any = Depends(get_db)) -> dict[str, Any]:
+    """The owner confirms the delivery fee of an order whose area is not on the list. The total is rebuilt."""
+    try:
+        found = db.table("orders").select("order_id, status, fulfillment").eq("order_id", order_id).limit(1).execute().data
+    except Exception:
+        logger.exception("Could not load order %s", order_id)
+        raise HTTPException(status_code=502, detail="Could not load the order")
+    if not found:
+        raise HTTPException(status_code=404, detail="Order not found")
+    if found[0].get("fulfillment") != "delivery":
+        raise HTTPException(status_code=400, detail="Pick up orders have no delivery fee")
+    if found[0]["status"] in ("completed", "cancelled"):
+        raise HTTPException(status_code=409, detail="This order is already closed")
+    items = db.table("order_items").select("subtotal").eq("order_id", order_id).execute().data or []
+    subtotal = sum((Decimal(str(i["subtotal"])) for i in items), Decimal("0"))
+    fee = Decimal(str(round(body.fee, 2)))
+    total = subtotal + fee
+    try:
+        db.table("orders").update({"delivery_fee": float(fee), "total_amount": float(total)}).eq("order_id", order_id).execute()
+    except Exception:
+        logger.exception("Could not save the fee for order %s", order_id)
+        raise HTTPException(status_code=502, detail="Could not save the fee. Did you run the delivery areas SQL?")
+    return {"id": order_id, "delivery_fee": float(fee), "total": float(total)}
 
 
 # ---------- Owner inbox: handoffs and unanswered questions ----------

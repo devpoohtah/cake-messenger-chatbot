@@ -274,3 +274,33 @@ create trigger trg_owner_inbox_updated_at
   for each row execute function public.set_updated_at();
 
 alter table public.owner_inbox enable row level security;
+
+-- 1) Delivery areas the owner manages in the dashboard (Delivery tab).
+--    fee is empty only for the special "Other areas" row: the owner confirms the fee for those orders.
+create table if not exists public.delivery_areas (
+  id         bigint generated always as identity primary key,
+  name       text not null,
+  fee        numeric(10,2),
+  is_active  boolean not null default true,
+  is_other   boolean not null default false,
+  created_at timestamptz not null default now(),
+  constraint delivery_areas_fee_valid check (fee is null or fee >= 0),
+  constraint delivery_areas_fee_required check (is_other or fee is not null),
+  constraint delivery_areas_name_valid check (length(btrim(name)) between 1 and 20)
+);
+
+create unique index if not exists uq_delivery_areas_name  on public.delivery_areas (lower(btrim(name)));
+create unique index if not exists uq_delivery_areas_other on public.delivery_areas (is_other) where is_other;
+
+alter table public.delivery_areas enable row level security;
+
+-- The "Other areas" row starts switched off, so until you add areas the bot keeps its flat 50 peso fee.
+insert into public.delivery_areas (name, fee, is_active, is_other)
+select 'Other areas', null, false, true
+where not exists (select 1 from public.delivery_areas where is_other);
+
+-- 2) Each order remembers its delivery area and fee. An empty fee on a delivery order means
+--    "the owner still has to confirm it". total_amount includes the fee once it is known.
+alter table public.orders add column if not exists delivery_area text;
+alter table public.orders add column if not exists delivery_fee numeric(10,2)
+  check (delivery_fee is null or delivery_fee >= 0);

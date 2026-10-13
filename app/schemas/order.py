@@ -34,6 +34,8 @@ class OrderRequest(BaseModel):
     fulfillment: Literal["delivery", "pickup"] = "delivery"
     notes: str | None = None
     dedication: str | None = None  # the message for the dedication card
+    delivery_area: str | None = None  # city or municipality of a delivery order
+    delivery_fee: Decimal | None = Field(default=None, ge=0)  # None on a delivery order = the owner will confirm it
     confirmed: bool = False
 
     @field_validator("notes")
@@ -42,6 +44,14 @@ class OrderRequest(BaseModel):
         v = (v or "").strip()
         if len(v) > 200:
             raise ValueError("notes must be 200 characters or fewer")
+        return v or None
+
+    @field_validator("delivery_area")
+    @classmethod
+    def _clean_area(cls, v: str | None) -> str | None:
+        v = (v or "").strip()
+        if len(v) > 100:
+            raise ValueError("delivery_area must be 100 characters or fewer")
         return v or None
 
     @field_validator("dedication")

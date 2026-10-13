@@ -202,4 +202,18 @@ def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreat
         logger.warning(
             "Total mismatch for order %s: backend=%s db=%s", created.order_id, expected_total, created.total_amount
         )
+
+    if request.fulfillment == "delivery" and request.delivery_area:
+        # The delivery fee is added to the total. A fee of None means the owner will confirm it later
+        # in the dashboard, so the total stays at the cakes only until then.
+        fee = _money(request.delivery_fee) if request.delivery_fee is not None else None
+        total = _money(created.total_amount + (fee or Decimal("0")))
+        try:
+            client.table("orders").update(
+                {"delivery_area": request.delivery_area, "delivery_fee": float(fee) if fee is not None else None,
+                 "total_amount": float(total)}
+            ).eq("order_id", created.order_id).execute()
+        except Exception:
+            logger.error("Could not save the delivery area/fee for order %s; did you run the delivery areas SQL?", created.order_id)
+        created = created.model_copy(update={"total_amount": total})  # the customer is told the right total either way
     return created

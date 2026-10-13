@@ -47,6 +47,11 @@ PICKUP_LOCATION = "Pickup at shop"  # stored in orders.location for pick-up orde
 MAX_CAKES_PER_ORDER = 20  # all cakes together; the per-cake cap is MAX_QUANTITY_PER_ITEM in order_service
 MAX_NOTES_LENGTH = 200
 MAX_DEDICATION_LENGTH = 80  # the message on the dedication card
+# Delivery address parts. Together they stay under 200 characters, the limit for the saved address.
+MAX_STREET_LENGTH = 100  # house number, street or purok, and barangay
+MIN_STREET_LENGTH = 8
+MAX_AREA_LENGTH = 50  # a city or municipality typed by the customer (listed areas have at most 20 characters)
+MAX_LANDMARK_LENGTH = 50
 # "oo" after a price quote starts an order. Safe to be loose: it never places one.
 QUOTE_YES_WORDS = {"yes", "y", "yes po", "oo", "oo po", "huo", "huo po", "sige", "ok", "okay", "sure", "gusto", "gusto ko", "order"}
 SKIP_WORDS = {"skip", "no", "none", "nope", "wala", "wala po", "wala na", "pass", "next"}
@@ -69,7 +74,8 @@ def _wants_owner(words: str) -> bool:
     return words in OWNER_WORDS or any(p in words for p in OWNER_PHRASES)
 
 
-CONTACT_FIELDS = ("customer_name", "contact_number", "location")
+CONTACT_FIELDS = ("customer_name", "contact_number")  # the delivery address is collected in parts (street, area, landmark)
+DELIVERY_PARTS = ("street", "area", "area_other", "landmark")  # values of draft["asking"] while the address is asked
 
 
 @dataclass
@@ -98,6 +104,33 @@ def _fulfillment_from_text(words: str) -> str | None:
 
 def _norm(text: str) -> str:
     return re.sub(r"[^\w\s]", "", text).strip().lower()
+
+def _match_area(text: str, areas: list[dict[str, Any]]) -> tuple[dict[str, Any] | None, bool]:
+    """Find the listed area a customer means. Returns (area, ambiguous)."""
+    said = f" {_norm(text)} "
+    if len(said.strip()) < 2:
+        return None, False
+    named = [a for a in areas if f" {_norm(a['name'])} " in said]  # the area's name appears in the text
+    if named:
+        return max(named, key=lambda a: len(a["name"])), False
+    part = [a for a in areas if len(said.strip()) >= 4 and said in f" {_norm(a['name'])} "]  # text is part of a name
+    if len(part) == 1:
+        return part[0], False
+    return None, bool(part)
+
+
+def _compose_location(draft: dict[str, Any]) -> str:
+    text = f"{draft['street']}, {draft['area']}"
+    if draft.get("landmark"):
+        text += f" (Landmark: {draft['landmark']})"
+    return text
+
+
+def _fee_line(lang: str, draft: dict[str, Any], fee: Decimal | None, tbc: bool) -> str:
+    if tbc:
+        return t(lang, "fee_line_tbc")
+    return t(lang, "fee_line", area=draft.get("area", ""), fee=_peso(fee or 0))
+
 
 def _plain(replies: list[Reply]) -> list[Reply]:
     """Drop buttons from side-answers given in the middle of an order."""
@@ -339,6 +372,10 @@ class ConversationService:
                 if len(card) > MAX_DEDICATION_LENGTH:
                     return self._advance(draft, products, available, t(lang, "dedication_too_long", max=MAX_DEDICATION_LENGTH))
                 return self._advance({**draft, "dedication": card, "dedication_done": True}, products, available)
+        if state == COLLECTING and draft.get("asking") in DELIVERY_PARTS:
+            outcome = self._typed_delivery_answer(draft, text, words, lang, products, available)
+            if outcome is not None:
+                return outcome
         topics = {topic: row["description"] for topic, row in load_faqs(self._client).items()}
         try:
             result = self._ai.interpret_message(text, state, [p["name"] for p in available], topics)
@@ -382,7 +419,7 @@ class ConversationService:
             return _plain(self._answer(result, draft, products, available)) + nxt[0], COLLECTING, nxt[2]
 
         # AWAITING confirmation
-        if any(k in fields for k in CONTACT_FIELDS):
+        if any(k in fields for k in CONTACT_FIELDS + ("location",)):
             return self._advance(self._merge(draft, fields), products, available, notice)
         if result.intent in QUESTION_INTENTS:
             answer = _plain(self._answer(result, draft, products, available))
@@ -439,10 +476,17 @@ class ConversationService:
             draft = self._cart_set(draft, draft["pending"], quantity)
         if "location" in fields:  # typing an address means delivery
             draft["fulfillment"] = "delivery"
+            draft["street"] = fields["location"][:MAX_STREET_LENGTH]
+            draft.pop("location", None)  # rebuilt once the area and landmark are known
+            if not draft.get("area"):
+                listed, _ = self._delivery_areas()
+                area, _ = _match_area(draft["street"], listed)  # "... Jaro" already says which area
+                if area:
+                    draft = self._with_area(draft, area)
         for key in CONTACT_FIELDS:
             if key in fields:
                 draft[key] = fields[key]
-        if any(k in fields for k in CONTACT_FIELDS) and draft["cart"] and not draft.get("pending"):
+        if any(k in fields for k in CONTACT_FIELDS + ("location",)) and draft["cart"] and not draft.get("pending"):
             draft["cart_done"] = True
         return draft
 
@@ -517,6 +561,20 @@ class ConversationService:
             if state != COLLECTING or draft.get("asking") != "notes":
                 return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
             return self._advance({**draft, "notes": "", "notes_done": True}, products, available)
+        if kind == "AREA":
+            if state != COLLECTING or draft.get("asking") != "area":
+                return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
+            listed, other = self._delivery_areas()
+            if arg == "other" and other:
+                return self._advance({**draft, "area_other_mode": True}, products, available)
+            area = next((a for a in listed if str(a["id"]) == arg), None)
+            if area is None:  # the owner changed the list while the customer was choosing
+                return self._advance(draft, products, available, t(lang, "area_pick"))
+            return self._advance(self._with_area(draft, area), products, available)
+        if kind == "NO_LANDMARK":
+            if state != COLLECTING or draft.get("asking") != "landmark":
+                return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
+            return self._advance({**draft, "landmark": "", "landmark_done": True}, products, available)
         if kind == "SKIP_DEDICATION":
             if state != COLLECTING or draft.get("asking") != "dedication":
                 return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))], state, draft
@@ -650,10 +708,14 @@ class ConversationService:
                              options=[(t(lang, "btn_add_more"), "ADD_MORE"), (t(lang, "btn_done"), "DONE_ADDING")])]
         elif not draft.get("fulfillment"):
             draft["asking"] = "fulfillment"
-            replies = [Reply(text=t(lang, "ask_fulfillment", fee=_peso(DELIVERY_FEE)),
+            replies = [Reply(text=t(lang, "ask_fulfillment"),
                              options=[(t(lang, "btn_delivery"), "FULFILL:delivery"), (t(lang, "btn_pickup"), "FULFILL:pickup")])]
         else:
             missing = next((f for f in CONTACT_FIELDS if not draft.get(f)), None)
+            if missing is None and draft.get("fulfillment") == "delivery":
+                missing = self._missing_delivery_part(draft)
+                if missing is None:
+                    draft["location"] = _compose_location(draft)  # street, area and landmark in one line
             if missing is None and draft.get("notes_done") and draft.get("dedication_done"):
                 return self._summary(draft, products, available)
             if missing is None and draft.get("notes_done"):
@@ -663,14 +725,123 @@ class ConversationService:
             elif missing is None:
                 draft["asking"] = "notes"
                 replies = [Reply(text=t(lang, "ask_notes"), options=[(t(lang, "btn_skip"), "SKIP_NOTES")])]
+            elif missing in DELIVERY_PARTS:
+                draft["asking"] = missing
+                replies = [self._ask_delivery_part(lang, missing)]
             else:
                 draft["asking"] = missing
-                key = {"customer_name": "ask_name", "contact_number": "ask_contact", "location": "ask_location"}[missing]
+                key = {"customer_name": "ask_name", "contact_number": "ask_contact"}[missing]
                 replies = [Reply(text=t(lang, key), ask_phone=(missing == "contact_number"))]
 
         if notice and replies and replies[0].text:
             replies[0] = replace(replies[0], text=f"{notice} {replies[0].text}")
         return replies, COLLECTING, draft
+
+    # ---------- delivery address, area and fee ----------
+    def _delivery_areas(self) -> tuple[list[dict[str, Any]], dict[str, Any] | None]:
+        """(active listed areas, the 'other areas' row if it is switched on). Both empty means flat-fee mode."""
+        cached = getattr(self, "_areas_cache", None)
+        if cached is not None:
+            return cached
+        try:
+            rows = self._client.table("delivery_areas").select("*").eq("is_active", True).order("id").execute().data or []
+        except Exception:
+            logger.warning("Could not load delivery areas; using the flat delivery fee (run the delivery areas SQL?)")
+            rows = []
+        listed = [r for r in rows if not r.get("is_other")]
+        other = next((r for r in rows if r.get("is_other")), None)
+        self._areas_cache = (listed, other)
+        return self._areas_cache
+
+    @staticmethod
+    def _with_area(draft: dict[str, Any], area: dict[str, Any]) -> dict[str, Any]:
+        """A listed area: its fee comes from the database."""
+        return {**draft, "area": area["name"], "area_id": area["id"], "area_custom": False,
+                "fee": str(area["fee"]), "fee_tbc": False, "area_other_mode": False}
+
+    @staticmethod
+    def _with_custom_area(draft: dict[str, Any], text: str) -> dict[str, Any]:
+        """An area that is not listed: the owner confirms the fee."""
+        return {**draft, "area": text, "area_id": None, "area_custom": True,
+                "fee": None, "fee_tbc": True, "area_other_mode": False}
+
+    def _missing_delivery_part(self, draft: dict[str, Any]) -> str | None:
+        if not draft.get("street"):
+            return "street"
+        if not draft.get("area"):
+            listed, other = self._delivery_areas()
+            if draft.get("area_other_mode") or (other and not listed):
+                return "area_other"
+            return "area"
+        if not draft.get("landmark_done"):
+            return "landmark"
+        return None
+
+    def _ask_delivery_part(self, lang: str, part: str) -> Reply:
+        if part == "street":
+            return Reply(text=t(lang, "ask_street"))
+        if part == "landmark":
+            return Reply(text=t(lang, "ask_landmark"), options=[(t(lang, "btn_no_landmark"), "NO_LANDMARK")])
+        if part == "area_other":
+            return Reply(text=t(lang, "ask_area_other"))
+        listed, other = self._delivery_areas()
+        if not listed and not other:  # no areas set up yet: any city is accepted and the flat fee applies
+            return Reply(text=t(lang, "ask_area_plain"))
+        fees = "\n".join(f"• {a['name']}: {_peso(a['fee'])}" for a in listed)
+        text = t(lang, "ask_area", fees=fees)
+        options = [(a["name"][:20], f"AREA:{a['id']}") for a in listed[:12]]
+        if other:
+            text += " " + t(lang, "ask_area_other_hint")
+            options.append((t(lang, "btn_other_area"), "AREA:other"))
+        return Reply(text=text, options=options)
+
+    def _typed_delivery_answer(self, draft, text, words, lang, products, available):
+        """A typed answer to the street, area or landmark question. None = let the usual handling take it."""
+        answer = text.strip()
+        if not answer or answer.endswith("?") or words in CANCEL_WORDS:
+            return None  # a question or a cancel goes through the usual path
+        asking = draft["asking"]
+        if asking == "street":
+            if len(answer) > MAX_STREET_LENGTH:
+                return self._advance(draft, products, available, t(lang, "address_too_long", max=MAX_STREET_LENGTH))
+            if len(answer) < MIN_STREET_LENGTH:
+                return self._advance(draft, products, available, t(lang, "address_too_short"))
+            draft = {**draft, "street": answer}
+            if not draft.get("area"):
+                listed, _ = self._delivery_areas()
+                area, _ = _match_area(answer, listed)
+                if area:
+                    draft = self._with_area(draft, area)
+            return self._advance(draft, products, available)
+        if asking == "landmark":
+            if words in SKIP_WORDS:
+                return self._advance({**draft, "landmark": "", "landmark_done": True}, products, available)
+            return self._advance({**draft, "landmark": answer[:MAX_LANDMARK_LENGTH], "landmark_done": True}, products, available)
+        listed, other = self._delivery_areas()
+        if asking == "area_other":
+            return self._advance(self._with_custom_area(draft, answer[:MAX_AREA_LENGTH]), products, available)
+        # asking == "area"
+        if not listed and not other:  # flat-fee mode: whatever city they type is fine
+            return self._advance({**draft, "area": answer[:MAX_AREA_LENGTH], "area_id": None, "area_custom": False,
+                                  "fee": str(DELIVERY_FEE), "fee_tbc": False}, products, available)
+        area, ambiguous = _match_area(answer, listed)
+        if area:
+            return self._advance(self._with_area(draft, area), products, available)
+        if ambiguous:
+            return self._advance(draft, products, available, t(lang, "area_pick"))
+        if other:  # not on the list: the owner confirms the fee
+            return self._advance(self._with_custom_area(draft, answer[:MAX_AREA_LENGTH]), products, available)
+        names = ", ".join(a["name"] for a in listed)
+        return self._advance(draft, products, available, t(lang, "area_not_found", areas=names))
+
+    @staticmethod
+    def _fee_info(draft: dict[str, Any]) -> tuple[Decimal | None, bool]:
+        """(fee, to_be_confirmed) of a delivery order. Pick up has no fee."""
+        if draft.get("fulfillment") != "delivery":
+            return None, False
+        if draft.get("fee_tbc") or draft.get("fee") is None:
+            return None, True
+        return Decimal(str(draft["fee"])), False
 
     # ---------- summary and ordering ----------
     def _build_request(self, draft: dict[str, Any], messenger_id: str | None, confirmed: bool) -> OrderRequest:
@@ -683,6 +854,8 @@ class ConversationService:
             fulfillment=draft.get("fulfillment", "delivery"),
             notes=draft.get("notes") or None,
             dedication=draft.get("dedication") or None,
+            delivery_area=draft.get("area") if draft.get("fulfillment") == "delivery" else None,
+            delivery_fee=self._fee_info(draft)[0],
             confirmed=confirmed,
         )
 
@@ -690,7 +863,7 @@ class ConversationService:
     def _where_text(lang: str, draft: dict[str, Any]) -> str:
         if draft.get("fulfillment") == "pickup":
             return t(lang, "where_pickup")
-        return t(lang, "where_delivery", location=draft["location"], fee=_peso(DELIVERY_FEE))
+        return t(lang, "where_delivery", location=draft["location"])
 
     def _summary(self, draft: dict[str, Any], products, available):
         lang = draft.get("lang", "en")
@@ -702,11 +875,23 @@ class ConversationService:
             fresh = _new_draft(lang)
             nxt = self._advance(fresh, products, available)
             return [Reply(text=t(lang, "invalid_order"))] + nxt[0], COLLECTING, nxt[2]
+        if draft.get("fulfillment") == "delivery" and draft.get("area_id") is not None and not draft.get("area_custom"):
+            listed, _ = self._delivery_areas()
+            row = next((a for a in listed if a["id"] == draft["area_id"]), None)
+            if row is None:  # the owner took the area off the list while the customer was ordering
+                gone = ("area", "area_id", "area_custom", "fee", "fee_tbc", "area_other_mode", "location")
+                return self._advance({k: v for k, v in draft.items() if k not in gone}, products, available, t(lang, "area_changed"))
+            draft = {**draft, "fee": str(row["fee"])}  # the owner may have changed the fee
+        fee, tbc = self._fee_info(draft)
         items = "\n".join(f"• {l.quantity} × {l.product_name} — {_peso(l.subtotal)}" for l in lines)
+        if draft.get("fulfillment") == "delivery":
+            items += "\n" + _fee_line(lang, draft, fee, tbc)
+        subtotal = orders.calculate_total(lines)
+        total = t(lang, "total_plus_fee", amount=_peso(subtotal)) if tbc else _peso(subtotal + (fee or 0))
         notes = t(lang, "notes_line", notes=draft["notes"]) if draft.get("notes") else ""
         if draft.get("dedication"):
             notes += t(lang, "dedication_line", card=draft["dedication"])
-        text = t(lang, "summary", items=items, total=_peso(orders.calculate_total(lines)),
+        text = t(lang, "summary", items=items, total=total,
                  name=draft["customer_name"], contact=draft["contact_number"],
                  where=self._where_text(lang, draft), notes=notes)
         draft = {k: v for k, v in draft.items() if k not in ("asking", "pending", "force_product")}
@@ -725,9 +910,13 @@ class ConversationService:
         except ValueError as exc:  # e.g. a cake became unavailable since the customer chose it
             logger.warning("Order rejected at confirmation: %s", type(exc).__name__)
             return [Reply(text=t(lang, "order_rejected"), options=self._start_options(lang))], IDLE, _new_draft(lang)
+        fee, tbc = self._fee_info(draft)
         items = "\n".join(f"• {i.quantity} × {i.product_name}" for i in order.items)
+        if draft.get("fulfillment") == "delivery":
+            items += "\n" + _fee_line(lang, draft, fee, tbc)
+        total = t(lang, "total_plus_fee", amount=_peso(order.total_amount)) if tbc else _peso(order.total_amount)
         text = t(lang, "order_received", order_id=order.order_id, items=items,
-                 total=_peso(order.total_amount), where=self._where_text(lang, draft), status=order.status)
+                 total=total, where=self._where_text(lang, draft), status=order.status)
         return [Reply(text=text, options=self._start_options(lang))], IDLE, _new_draft(lang)
 
 
