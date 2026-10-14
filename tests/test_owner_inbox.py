@@ -214,7 +214,7 @@ def test_missing_table_tells_the_customer_instead_of_pretending():
 def test_bot_keeps_working_if_the_inbox_cannot_be_read():
     db = FakeDB(broken_tables={"owner_inbox"})
     replies = say(db, FakeAI(AIResult(intent=Intent.GREETING)), "hi")
-    assert texts(replies) == [t("en", "greeting")]
+    assert texts(replies)[0].startswith(t("en", "greeting"))  # the greeting also carries the automated-assistant note
 
 
 def test_second_miss_offers_the_owner_and_questions_are_saved():

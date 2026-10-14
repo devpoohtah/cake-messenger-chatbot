@@ -75,6 +75,7 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
   <nav>
     <button class="on" data-tab="orders">Orders</button>
     <button data-tab="calendar">Calendar</button>
+    <button data-tab="insights">Insights</button>
     <button data-tab="products">Products</button>
     <button data-tab="faq">FAQ</button>
     <button data-tab="delivery">Delivery</button>
@@ -128,6 +129,26 @@ select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--
       <div class="wrap" style="margin-top:12px"><table>
         <thead><tr><th>#</th><th>Time</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
         <tbody id="dayRows"></tbody>
+      </table></div>
+    </div>
+  </section>
+
+  <section id="insights" class="hidden">
+    <div class="card">
+      <h3>Missed orders (last 30 days)</h3>
+      <p class="muted">Customers who tried to order while the shop was closed: a locked day, outside opening hours, or the master switch. Counted once per customer per 30 minutes.</p>
+      <p id="missedTotal"></p>
+      <div class="wrap"><table>
+        <thead><tr><th>Day</th><th>Attempts</th><th>Why</th></tr></thead>
+        <tbody id="missedRows"></tbody>
+      </table></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3>Questions the bot couldn't answer</h3>
+      <p class="muted">The most repeated ones in the last 30 days. For the common ones, write an answer in the FAQ tab.</p>
+      <div class="wrap"><table>
+        <thead><tr><th>Times</th><th>Message</th></tr></thead>
+        <tbody id="unansweredRows"></tbody>
       </table></div>
     </div>
   </section>
@@ -614,13 +635,33 @@ function moveMonth(delta) {
   calSelected = null; $("dayPanel").classList.add("hidden"); loadCalendar();
 }
 
-const TABS = ["orders", "calendar", "products", "faq", "delivery", "inbox"];
+// ---------- Insights: missed orders and unanswered questions ----------
+const MISSED_WHY = {switch: "master switch off", day: "locked day", hours: "outside hours", closed: "closed"};
+
+async function loadInsights() {
+  let data;
+  try { data = await api("insights"); } catch (e) { showError(e); return; }
+  if (data.missed) {
+    $("missedTotal").innerHTML = `<b>${data.missed.total}</b> order attempt${data.missed.total === 1 ? "" : "s"} while closed`;
+    $("missedRows").innerHTML = data.missed.days.map(d => `<tr><td>${esc(d.day)}</td><td>${d.count}</td>` +
+      `<td>${Object.entries(d.reasons).map(([k, v]) => esc((MISSED_WHY[k] || k) + " × " + v)).join(", ")}</td></tr>`).join("") ||
+      '<tr><td colspan="3" class="muted">No missed orders in this period.</td></tr>';
+  } else {
+    $("missedTotal").textContent = "Missed orders are not recorded yet. Run section 4 of supabase/schema.sql.";
+    $("missedRows").innerHTML = "";
+  }
+  $("unansweredRows").innerHTML = data.unanswered.map(u => `<tr><td>${u.count}</td><td>${esc(u.message)}</td></tr>`).join("") ||
+    '<tr><td colspan="2" class="muted">Nothing unanswered. 🎉</td></tr>';
+}
+
+const TABS = ["orders", "calendar", "insights", "products", "faq", "delivery", "inbox"];
 document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
   document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
   TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
 });
 $("filter").onchange = renderOrders;
 document.querySelector('nav button[data-tab="calendar"]').addEventListener("click", loadCalendar);
+document.querySelector('nav button[data-tab="insights"]').addEventListener("click", loadInsights);
 $("calPrev").onclick = () => moveMonth(-1);
 $("calNext").onclick = () => moveMonth(1);
 $("calToday").onclick = () => { calMonth = todayPH().slice(0, 7); calSelected = todayPH(); loadCalendar(); };

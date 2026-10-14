@@ -7,6 +7,7 @@ always come from the database), and creates an order only after Confirm.
 import logging
 import re
 from dataclasses import dataclass, field, replace
+from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Any
 
@@ -16,6 +17,7 @@ from app.services.ai_service import AIResult, AIService, AIUnavailableError, Int
 from app.services import owner_inbox, shop_hours
 from app.services.faq_store import load_faqs
 from app.services.messages import MESSAGES, t
+from app.services.messenger_service import LOW_STOCK_AT
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -42,7 +44,9 @@ CONFIRM_WORDS = {"yes", "y", "confirm", "confirmed", "yes po", "confirm po", "hu
 MORE_WORDS = {"yes", "y", "another", "add", "more", "add another", "oo", "huo"}
 DONE_WORDS = {"done", "thats all", "that is all", "no", "nope", "none", "enough", "wala na", "tapos na", "ok", "okay", "indi"}
 BYE_WORDS = {"bye", "goodbye", "bye bye", "babay", "paalam"}
-DELIVERY_FEE = Decimal("50")  # flat fee for now; shown in the summary, not added to the total
+DELIVERY_FEE = Decimal("50")  # flat fee, used only while the owner has set no delivery areas
+DRAFT_EXPIRY_HOURS = 24  # an unfinished order is cleared after this long without a message from the customer
+SHOW_DISCLAIMER = True  # add the "automated assistant" note to the greeting and to FAQ answers
 PICKUP_LOCATION = "Pickup at shop"  # stored in orders.location for pick-up orders
 MAX_CAKES_PER_ORDER = 20  # all cakes together; the per-cake cap is MAX_QUANTITY_PER_ITEM in order_service
 MAX_NOTES_LENGTH = 200
@@ -87,6 +91,7 @@ class Reply:
     ask_phone: bool = False
     products: list[dict[str, Any]] | None = None
     carousel_button: str = "Order this"
+    low_stock: str = ""  # carousel label with {n}, e.g. "Only {n} left!"; empty = no hint
 
 
 def _peso(value: Any) -> str:
@@ -135,6 +140,21 @@ def _fee_line(lang: str, draft: dict[str, Any], fee: Decimal | None, tbc: bool) 
 def _plain(replies: list[Reply]) -> list[Reply]:
     """Drop buttons from side-answers given in the middle of an order."""
     return [replace(r, options=[]) for r in replies]
+
+def _stamp() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _draft_expired(draft: dict[str, Any], now: datetime | None = None) -> bool:
+    """True when the draft was last touched more than DRAFT_EXPIRY_HOURS ago. A draft without a stamp is kept."""
+    try:
+        touched = datetime.fromisoformat(str(draft["touched"]))
+    except (KeyError, TypeError, ValueError):
+        return False
+    if touched.tzinfo is None:
+        touched = touched.replace(tzinfo=timezone.utc)
+    return ((now or datetime.now(timezone.utc)) - touched).total_seconds() > DRAFT_EXPIRY_HOURS * 3600
+
 
 def _new_draft(lang: str = "en") -> dict[str, Any]:
     return {"cart": [], "lang": lang}
@@ -209,21 +229,11 @@ class ConversationService:
         self._lang_cand: str | None = None  # a different language seen once, waiting for a second vote
 
     def _resolve_lang(self, current: str, detected: str | None) -> str:
-        """Sticky language: the first detection is adopted at once; after that a different
-        language must be detected twice in a row, so one ambiguous message can't flip it."""
+        """Reply in the language of this message. When the AI can't tell (a number, "ok", a name), keep the current one."""
         if detected not in LANGUAGES:
             return current
-        if not self._lang_seen:
-            self._lang_seen, self._lang_cand = True, None
-            return detected
-        if detected == current:
-            self._lang_cand = None
-            return current
-        if self._lang_cand == detected:
-            self._lang_cand = None
-            return detected
-        self._lang_cand = detected
-        return current
+        self._lang_seen, self._lang_cand = True, None
+        return detected
 
     # ---------- storage ----------
     def _load(self, messenger_id: str) -> tuple[str, dict[str, Any]]:
@@ -251,30 +261,43 @@ class ConversationService:
     
     # ---------- entry point ----------
     def handle(
-        self, sender_id: str, text: str, message_id: str | None = None, payload: str | None = None
+        self, sender_id: str, text: str, message_id: str | None = None, payload: str | None = None,
+        attachment: str | None = None,
     ) -> list[Reply] | None:
         """Return the replies to send, or None if this message was already processed (Meta retry)."""
         state, draft = self._load(sender_id)
         if message_id and draft.get("last_mid") == message_id:
             return None
-        silent, bot_back = self._handoff_gate(sender_id, text, payload)
+        silent, bot_back = self._handoff_gate(sender_id, text or (f"[{attachment}]" if attachment else ""), payload)
         if silent:  # the owner has this customer: stay quiet, but remember the message id (Meta retries)
+            draft["touched"] = _stamp()  # a customer talking to the owner has not abandoned the order
             if message_id:
                 draft["last_mid"] = message_id
-                self._save(sender_id, state, draft)
+            self._save(sender_id, state, draft)
             return []
         self._lang_seen = bool(draft.get("lang_seen"))
         self._lang_cand = draft.get("lang_cand")
         self._prev_misses = int(draft.get("misses", 0))  # NEW (Edit 2.3)
-        replies, state, draft = self._process(sender_id, text, payload, state, draft)
-        if bot_back:  # coming back from the owner: say that this is the automated assistant again
+        expired = state != IDLE and _draft_expired(draft)
+        if expired:  # an order left unfinished for a day: start fresh instead of resuming a stale cart
+            state, draft = IDLE, _new_draft(draft.get("lang", "en"))
+        if attachment and not text and payload is None:  # a photo, voice message, file, location pin or sticker
+            lang = draft.get("lang", "en")
+            replies = [] if attachment == "sticker" else [Reply(text=t(lang, "attachment_received"), options=self._owner_options(lang))]
+        else:
+            replies, state, draft = self._process(sender_id, text, payload, state, draft)
+            if expired:
+                replies = [Reply(text=t(draft.get("lang", "en"), "draft_expired"))] + replies
+        if bot_back and replies:  # coming back from the owner: say that this is the automated assistant again
             replies = [Reply(text=t(draft.get("lang", "en"), "owner_back"))] + replies
         draft["lang_seen"], draft["lang_cand"] = self._lang_seen, self._lang_cand  # survive resets
         draft["misses"] = self._prev_misses + 1 if self._missed else 0  # NEW (Edit 2.4)
+        draft["touched"] = _stamp()
         if message_id:
             draft["last_mid"] = message_id  # survives resets, so a retried Confirm can't order twice
         self._save(sender_id, state, draft)
         return replies
+
     # ---------- owner handoff ----------
     def _handoff_gate(self, sender_id: str, text: str, payload: str | None) -> tuple[bool, bool]:
         """Returns (stay_silent, bot_is_back). Never raises: if the check fails the bot answers normally."""
@@ -310,7 +333,7 @@ class ConversationService:
             return [Reply(text=t(lang, "owner_waiting"), options=self._start_options(lang))], state, draft
         if not owner_inbox.open_handoff(self._client, sender_id, text.strip() or "(tapped Talk to the owner)"):
             return [Reply(text=t(lang, "owner_unavailable"), options=self._start_options(lang))], state, draft
-        return [Reply(text=t(lang, "owner_handoff"))], state, draft
+        return [Reply(text=self._handoff_text(lang))], state, draft
 
     # ---------- flow ----------
     def _process(self, sender_id: str, text: str, payload: str | None, state: str, draft: dict[str, Any]):
@@ -427,20 +450,50 @@ class ConversationService:
         return [self._confirm_prompt(lang, "awaiting_hint")], AWAITING, draft
 
     def _order_status_replies(self, lang: str) -> list[Reply]:
-        """Tell the customer the current status of their latest order (the owner changes it in the dashboard)."""
+        """Status of the customer's open orders (up to 3). Pending ones get a Cancel button: the owner hasn't started them."""
         try:
-            order = orders.get_latest_order(self._client, self._sender_id)
+            shown = orders.get_active_orders(self._client, self._sender_id)
+            if not shown:
+                latest = orders.get_latest_order(self._client, self._sender_id)
+                shown = [latest] if latest else []
         except Exception:
-            logger.warning("Could not look up the latest order")
+            logger.warning("Could not look up the customer's orders")
             return [Reply(text=t(lang, "error"))]
-        if order is None:
+        if not shown:
             return [Reply(text=t(lang, "order_status_none"), options=self._start_options(lang))]
-        items = "\n".join(f"• {qty} × {name}" for name, qty in order["items"])
-        key = "status_" + order["status"]
-        status_text = t(lang, key) if key in MESSAGES["en"] else order["status"]
-        text = t(lang, "order_status", order_id=order["order_id"], items=items,
-                 total=_peso(order["total_amount"]), status_text=status_text)
-        return [Reply(text=text, options=self._start_options(lang))]
+        blocks = []
+        for order in shown:
+            items = "\n".join(f"• {qty} × {name}" for name, qty in order["items"])
+            key = "status_" + order["status"]
+            status_text = t(lang, key) if key in MESSAGES["en"] else order["status"]
+            blocks.append(t(lang, "order_status", order_id=order["order_id"], items=items,
+                            total=_peso(order["total_amount"]), status_text=status_text))
+        cancel = [(t(lang, "btn_cancel_order", order_id=o["order_id"]), f"CANCEL_ORDER:{o['order_id']}")
+                  for o in shown if o["status"] == "pending"]
+        return [Reply(text="\n\n".join(blocks), options=cancel + self._start_options(lang))]
+
+    def _order_cancel_flow(self, kind: str, arg: str, lang: str) -> list[Reply]:
+        """Cancel an order that is already placed: ask first, then cancel only if it is still pending."""
+        try:
+            order_id = int(arg)
+        except ValueError:
+            return [Reply(text=t(lang, "fallback"), options=self._start_options(lang))]
+        if kind == "KEEP_ORDER":
+            return [Reply(text=t(lang, "order_kept", order_id=order_id), options=self._start_options(lang))]
+        if kind == "CANCEL_ORDER":
+            return [Reply(text=t(lang, "order_cancel_ask", order_id=order_id),
+                          options=[(t(lang, "btn_cancel_yes"), f"CANCEL_ORDER_YES:{order_id}"),
+                                   (t(lang, "btn_cancel_keep"), f"KEEP_ORDER:{order_id}")])]
+        try:
+            outcome = orders.cancel_pending_order(self._client, self._sender_id, order_id)
+        except Exception:
+            logger.warning("Could not cancel order %s", order_id)
+            return [Reply(text=t(lang, "error"))]
+        if outcome == "cancelled":
+            return [Reply(text=t(lang, "order_cancelled_ok", order_id=order_id), options=self._start_options(lang))]
+        if outcome == "late":  # the owner already started on it
+            return [Reply(text=t(lang, "order_cancel_late", order_id=order_id), options=self._owner_options(lang))]
+        return [Reply(text=t(lang, "order_status_none"), options=self._start_options(lang))]
 
     def _thanks(self, state: str, draft: dict[str, Any], products, available, key: str = "thanks"):
         """Send one short fixed message (thanks, bye, AI trouble), then keep any order moving."""
@@ -521,9 +574,13 @@ class ConversationService:
         base = draft if state != IDLE else _new_draft(lang)
 
         if kind == "GET_STARTED":  # the Get Started button on a brand-new chat
-            return [Reply(text=t(lang, "greeting"), options=self._start_options(lang))], state, draft
+            return [self._disclaimed(lang, Reply(text=t(lang, "greeting"), options=self._start_options(lang)))], state, draft
         if kind == "MENU":
             return self._menu_replies(lang, available), state, draft
+        if kind == "MY_ORDERS":
+            return self._order_status_replies(lang), state, draft
+        if kind in ("CANCEL_ORDER", "CANCEL_ORDER_YES", "KEEP_ORDER"):  # cancel an order that is already placed
+            return self._order_cancel_flow(kind, arg, lang), state, draft
         if kind == TALK_OWNER:
             return self._start_handoff(sender_id, "", lang, state, draft)  # no typed text: a default note is saved
         if kind == "ORDER":
@@ -599,12 +656,16 @@ class ConversationService:
     def _menu_replies(lang: str, available) -> list[Reply]:
         if not available:
             return [Reply(text=t(lang, "menu_empty"))]
-        return [Reply(text=t(lang, "menu_intro"), products=available, carousel_button=t(lang, "btn_order_this"))]
+        return [Reply(text=t(lang, "menu_intro"), products=available, carousel_button=t(lang, "btn_order_this"),
+                      low_stock=t(lang, "low_stock", n="{n}"))]
 
     def _shop_closed_reply(self, lang: str) -> Reply | None:
         """A closed-shop notice, or None while the shop is taking orders (owner settings: see shop_hours)."""
         status = shop_hours.current_status(self._client)
-        return None if status.is_open else self._closed_notice(lang, status)
+        if status.is_open:
+            return None
+        shop_hours.log_missed(self._client, self._sender_id, status.reason)  # counted in the dashboard's Insights tab
+        return self._closed_notice(lang, status)
 
     def _hours_answer(self, lang: str) -> Reply | None:
         """Live answer to "are you open?" from the owner's settings. None = the FAQ text answers."""
@@ -629,7 +690,9 @@ class ConversationService:
     def _answer(self, result: AIResult, draft, products, available) -> list[Reply]:
         lang = draft.get("lang", "en")
         if result.intent == Intent.GREETING:
-            return [Reply(text=t(lang, "greeting"), options=self._start_options(lang))]
+            return [self._disclaimed(lang, Reply(text=t(lang, "greeting"), options=self._start_options(lang)))]
+        if result.intent == Intent.CANCEL_ORDER:  # idle: they may mean an order that is already placed
+            return self._order_status_replies(lang)
         if result.intent == Intent.ORDER_STATUS:
             return self._order_status_replies(lang)
         if result.intent == Intent.NOT_SOLD:
@@ -646,19 +709,30 @@ class ConversationService:
             if not product.get("is_available"):
                 return [Reply(text=_unavailable_text(lang, product))] + self._menu_replies(lang, available)
             desc = f"\n{product['description']}" if product.get("description") else ""
+            if product.get("stock") is not None and 0 < product["stock"] <= LOW_STOCK_AT:
+                desc += "\n" + t(lang, "low_stock", n=product["stock"])
             text = t(lang, "price_line", name=product["name"], price=_peso(product["price"]), desc=desc)
             return [Reply(text=text, options=[(t(lang, "btn_order_this"), f"ORDER:{product['product_id']}"), (t(lang, "btn_menu"), "MENU")])]
         if result.intent == Intent.ORDERING_INFO:
             return [Reply(text=t(lang, "ordering_info"), options=self._start_options(lang))]
         if result.intent == Intent.FAQ_QUESTION:
-            if result.faq_topic == "hours":  # open, closed, why and until when come from the database, not the AI
+            topic = result.faq_topic or ""
+            live = None
+            if topic == "hours":  # open, closed, why and until when come from the database, not the AI
                 live = self._hours_answer(lang)
-                if live is not None:
-                    return [live]
-            row = load_faqs(self._client).get(result.faq_topic or "")
+            elif topic == "delivery":  # areas and fees come from the delivery_areas table
+                live = self._delivery_answer(lang, result.place)
+            if live is not None:
+                return [self._disclaimed(lang, live)]
+            row = load_faqs(self._client).get(topic)
             answer = row and (row.get(lang) or row["en"])
             if answer:  # the answer is text YOU wrote in faq.py, never AI-generated
-                return [Reply(text=answer, options=self._start_options(lang))]
+                if topic in ("pickup", "location"):
+                    answer += self._live_hours_line(lang)  # today's hours or closed notice, from the database
+                options = self._start_options(lang)
+                if topic == "cancellation":  # the customer can cancel a pending order from "My orders"
+                    options = options + [(t(lang, "btn_my_orders"), "MY_ORDERS")]
+                return [self._disclaimed(lang, Reply(text=answer, options=options))]
             self._log_unanswered()
             return [Reply(text=t(lang, "faq_unknown"), options=self._owner_options(lang))]
         self._log_unanswered()
@@ -666,6 +740,53 @@ class ConversationService:
         key = "fallback_again" if self._prev_misses else "fallback"
         options = self._owner_options(lang) if self._prev_misses else self._start_options(lang)  # 2nd miss: offer the owner
         return [Reply(text=t(lang, key), options=options)]
+
+    def _handoff_text(self, lang: str) -> str:
+        """Tell the customer when to expect the owner: soon while open, at reopening time while closed."""
+        status = shop_hours.current_status(self._client)
+        if status.is_open:
+            return t(lang, "owner_handoff")
+        when = shop_hours.reopening_text(status)
+        return t(lang, "owner_handoff_closed", when=when) if when else t(lang, "owner_handoff_closed_open")
+
+    def _live_hours_line(self, lang: str) -> str:
+        """Appended to the pickup and location answers: today's closing time, or why we are closed."""
+        status = shop_hours.current_status(self._client)
+        if not status.is_open:
+            return "\n\n" + self._closed_notice(lang, status).text
+        if status.closes is not None:
+            return "\n" + t(lang, "shop_open_line", until=shop_hours.clock(status.closes))
+        return ""  # no opening hours set in the dashboard: the FAQ text stands alone
+
+    def _delivery_answer(self, lang: str, place: str | None) -> Reply | None:
+        """Delivery areas and fees straight from the database. None in flat-fee mode: the FAQ text answers."""
+        listed, other = self._delivery_areas()
+        if not listed and not other:
+            return None
+        areas = "\n".join(f"• {a['name']} — {_peso(a['fee'])}" for a in listed)
+        place = (place or "").strip()[:40]
+        if not listed:  # only "other areas" is switched on
+            text = t(lang, "delivery_area_other", place=place) if place else t(lang, "delivery_only_other")
+        elif place:
+            area, ambiguous = _match_area(place, listed)
+            if area:
+                text = t(lang, "delivery_area_fee", area=area["name"], fee=_peso(area["fee"]))
+            elif ambiguous:
+                text = t(lang, "delivery_area_pick", areas=areas)
+            elif other:
+                text = t(lang, "delivery_area_other", place=place)
+            else:
+                text = t(lang, "delivery_area_no", place=place) + "\n" + t(lang, "delivery_list", areas=areas)
+        else:
+            text = t(lang, "delivery_list", areas=areas) + "\n" + t(lang, "delivery_other_yes" if other else "delivery_other_no")
+        return Reply(text=text, options=self._start_options(lang))
+
+    @staticmethod
+    def _disclaimed(lang: str, reply: Reply) -> Reply:
+        """Add the short 'automated assistant' note (switch off with SHOW_DISCLAIMER)."""
+        if not SHOW_DISCLAIMER:
+            return reply
+        return replace(reply, text=f"{reply.text}\n\n{t(lang, 'ai_disclaimer')}")
 
     def _cart_text(self, cart: list[dict[str, Any]], products) -> str:
         rows = []
@@ -956,7 +1077,8 @@ _ai_service: AIService | None = None
 
 
 def handle_incoming_message(
-    sender_id: str, text: str, message_id: str | None = None, payload: str | None = None
+    sender_id: str, text: str, message_id: str | None = None, payload: str | None = None,
+    attachment: str | None = None,
 ) -> list[Reply] | None:
     """Called by the webhook. Never raises, so Meta always gets a 200."""
     global _ai_service
@@ -967,7 +1089,7 @@ def handle_incoming_message(
             from app.services.ai_service import GeminiAIService
 
             _ai_service = GeminiAIService()
-        return ConversationService(_ai_service, get_supabase_client()).handle(sender_id, text, message_id, payload)
+        return ConversationService(_ai_service, get_supabase_client()).handle(sender_id, text, message_id, payload, attachment)
     except Exception:
         logger.exception("Conversation handling failed")
         return [Reply(text=t("en", "error"))]
@@ -985,7 +1107,7 @@ def deliver_replies(sender_id: str, replies: list[Reply] | None, messenger: Any 
         if r.products:
             if r.text:
                 messenger.send_text(sender_id, r.text)
-            messenger.send_product_carousel(sender_id, r.products, r.carousel_button)
+            messenger.send_product_carousel(sender_id, r.products, r.carousel_button, r.low_stock)
         elif r.options or r.ask_phone:
             messenger.send_quick_replies(sender_id, r.text, r.options, r.ask_phone)
         elif r.text:

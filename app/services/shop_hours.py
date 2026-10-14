@@ -102,3 +102,23 @@ def reopening_text(status: ShopStatus) -> str | None:
         return None
     day = f"{status.reopens:%b} {status.reopens.day}"
     return f"{day}, {clock(status.reopens.time())}" if status.timed else day
+
+
+MISSED_DEDUPE_MINUTES = 30  # one missed-order record per customer in this window
+
+
+def log_missed(client: Any, messenger_id: str, reason: str | None) -> None:
+    """Record that a customer tried to order while the shop was closed (the dashboard's Insights tab counts them).
+
+    Never raises. `reason` is "switch", "day" or "hours".
+    """
+    if not messenger_id:
+        return
+    try:
+        cutoff = (datetime.now(timezone.utc) - timedelta(minutes=MISSED_DEDUPE_MINUTES)).isoformat()
+        recent = client.table("missed_orders").select("id").eq("messenger_id", messenger_id).gte("created_at", cutoff).limit(1).execute().data
+        if recent:
+            return
+        client.table("missed_orders").insert({"messenger_id": messenger_id, "reason": reason or "closed"}).execute()
+    except Exception:
+        logger.warning("Could not record the missed order; did you run the missed orders SQL?")

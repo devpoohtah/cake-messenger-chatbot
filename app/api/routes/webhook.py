@@ -53,7 +53,7 @@ def receive_event(payload: dict[str, Any] = Body(default_factory=dict)):
         messenger.send_action(msg.sender_id, "mark_seen")
         if msg.payload is None:  # typed text may wait for the AI, so show "typing..."
             messenger.send_action(msg.sender_id, "typing_on")
-        replies = handle_incoming_message(msg.sender_id, msg.text, msg.message_id, msg.payload)
+        replies = handle_incoming_message(msg.sender_id, msg.text, msg.message_id, msg.payload, msg.attachment)
         if replies is None:
             _show("BOT >> (no reply: Meta sent this message twice)")
         elif not replies:

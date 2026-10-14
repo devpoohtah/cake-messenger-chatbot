@@ -327,3 +327,14 @@ create table if not exists public.closed_days (
   created_at timestamptz not null default now()
 );
 alter table public.closed_days enable row level security;
+
+-- 4) Order attempts made while the shop was closed (counted in the dashboard's Insights tab).
+--    reason: switch = master switch off, day = locked day, hours = outside opening hours.
+create table if not exists public.missed_orders (
+  id           bigint generated always as identity primary key,
+  messenger_id text not null,
+  reason       text not null default 'closed' check (reason in ('switch', 'day', 'hours', 'closed')),
+  created_at   timestamptz not null default now()
+);
+create index if not exists idx_missed_orders_created on public.missed_orders (created_at desc);
+alter table public.missed_orders enable row level security;

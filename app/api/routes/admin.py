@@ -682,3 +682,38 @@ def unlock_day(day: date, db: Any = Depends(get_db)) -> dict[str, Any]:
         logger.exception("Could not unlock %s", day)
         raise HTTPException(status_code=502, detail="Could not unlock the day")
     return {"day": day.isoformat(), "locked": False, "reason": ""}
+
+
+# ---------- insights: missed orders and questions the bot could not answer ----------
+@router.get("/api/insights")
+def insights(days: int = 30, db: Any = Depends(get_db)) -> dict[str, Any]:
+    """Order attempts made while the shop was closed, per Manila day, and the most repeated unanswered questions."""
+    days = max(1, min(days, 90))
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    missed: dict[str, Any] | None = None
+    try:
+        rows = db.table("missed_orders").select("created_at, reason").gte("created_at", since).limit(5000).execute().data or []
+        by_day: dict[str, dict[str, Any]] = {}
+        for r in rows:
+            key = _ph_day(r.get("created_at"))
+            if not key:
+                continue
+            reason = r.get("reason") or "closed"
+            entry = by_day.setdefault(key, {"day": key, "count": 0, "reasons": {}})
+            entry["count"] += 1
+            entry["reasons"][reason] = entry["reasons"].get(reason, 0) + 1
+        missed = {"total": sum(e["count"] for e in by_day.values()), "days": sorted(by_day.values(), key=lambda e: e["day"], reverse=True)}
+    except Exception:
+        logger.warning("Could not read missed_orders; did you run the missed orders SQL (section 4 of schema.sql)?")
+    unanswered: list[dict[str, Any]] = []
+    try:
+        rows = db.table("owner_inbox").select("message").eq("kind", "unanswered").gte("created_at", since).limit(2000).execute().data or []
+        counts: dict[str, int] = {}
+        for r in rows:
+            text = " ".join(str(r.get("message") or "").lower().split())
+            if text:
+                counts[text] = counts.get(text, 0) + 1
+        unanswered = [{"message": m, "count": c} for m, c in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]]
+    except Exception:
+        logger.warning("Could not read the unanswered questions")
+    return {"days": days, "missed": missed, "unanswered": unanswered}

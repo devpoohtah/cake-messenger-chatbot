@@ -146,6 +146,62 @@ def get_latest_order(client: Any, messenger_id: str) -> dict[str, Any] | None:
         "items": [((i.get("products") or {}).get("name", "?"), i["quantity"]) for i in r.get("order_items") or []],
     }
 
+ACTIVE_STATUSES = ("pending", "confirmed", "preparing", "ready", "out_for_delivery")  # not completed, not cancelled
+
+
+def _customer_id(client: Any, messenger_id: str) -> Any | None:
+    rows = client.table("customers").select("customer_id").eq("messenger_id", messenger_id).limit(1).execute().data
+    return rows[0]["customer_id"] if rows else None
+
+
+def get_active_orders(client: Any, messenger_id: str, limit: int = 3) -> list[dict[str, Any]]:
+    """The newest orders of this Messenger account that are still open, newest first."""
+    customer_id = _customer_id(client, messenger_id)
+    if customer_id is None:
+        return []
+    rows = (
+        client.table("orders")
+        .select("order_id, status, total_amount, order_items(quantity, products(name))")
+        .eq("customer_id", customer_id)
+        .in_("status", list(ACTIVE_STATUSES))
+        .order("order_date", desc=True)
+        .limit(limit)
+        .execute()
+        .data
+        or []
+    )
+    return [
+        {
+            "order_id": r["order_id"],
+            "status": r["status"],
+            "total_amount": Decimal(str(r["total_amount"])),
+            "items": [((i.get("products") or {}).get("name", "?"), i["quantity"]) for i in r.get("order_items") or []],
+        }
+        for r in rows
+    ]
+
+
+def cancel_pending_order(client: Any, messenger_id: str, order_id: int) -> str:
+    """Cancel an order for its own customer, but only while it is still 'pending'.
+
+    Returns "cancelled", "late" (the owner already started on it) or "none" (no such order on this account).
+    The status check is part of the UPDATE itself, so an owner accepting the order at the same moment wins.
+    """
+    customer_id = _customer_id(client, messenger_id)
+    if customer_id is None:
+        return "none"
+    found = client.table("orders").select("order_id, status").eq("order_id", order_id).eq("customer_id", customer_id).limit(1).execute().data
+    if not found:
+        return "none"
+    if found[0]["status"] == "cancelled":
+        return "cancelled"
+    done = (
+        client.table("orders").update({"status": "cancelled"})
+        .eq("order_id", order_id).eq("customer_id", customer_id).eq("status", "pending").execute().data
+    )
+    return "cancelled" if done else "late"
+
+
 def create_order(request: OrderRequest, client: Any | None = None) -> OrderCreated:
     """Create an order. Refuses unless the customer explicitly confirmed."""
     if not request.confirmed:

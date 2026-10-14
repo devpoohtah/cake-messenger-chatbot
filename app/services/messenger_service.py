@@ -13,6 +13,7 @@ logger = logging.getLogger("uvicorn.error")
 
 MAX_QUICK_REPLIES = 13  # Meta limit
 MAX_CAROUSEL_ELEMENTS = 10  # Meta limit
+LOW_STOCK_AT = 5  # a cake card says "Only N left" at or below this stock (blank stock = unlimited)
 QUICK_REPLY_TITLE_MAX = 20  # kept short on purpose: Meta truncates long titles
 
 
@@ -23,6 +24,7 @@ class IncomingMessage:
     text: str
     message_id: str | None
     payload: str | None = None  # set when the customer tapped a quick reply or postback button
+    attachment: str | None = None  # a photo, voice message, file, location or sticker instead of text: image, audio, video, file, location, sticker
 
 
 def extract_text_messages(payload: dict) -> list[IncomingMessage]:
@@ -51,7 +53,13 @@ def extract_text_messages(payload: dict) -> list[IncomingMessage]:
                 button_payload = (message.get("quick_reply") or {}).get("payload")
                 message_id = message.get("mid")
 
-            if not text and button_payload is None:
+            attachment = None
+            if not postback:
+                attachments = message.get("attachments") or []
+                if attachments and not text and button_payload is None:
+                    first = attachments[0] or {}
+                    attachment = "sticker" if (first.get("payload") or {}).get("sticker_id") else str(first.get("type") or "file")
+            if not text and button_payload is None and attachment is None:
                 continue
             found.append(
                 IncomingMessage(
@@ -60,6 +68,7 @@ def extract_text_messages(payload: dict) -> list[IncomingMessage]:
                     text=text,
                     message_id=message_id,
                     payload=None if button_payload is None else str(button_payload),
+                    attachment=attachment,
                 )
             )
     return found
@@ -81,12 +90,15 @@ def build_quick_replies_message(
 
 
 def build_product_carousel_message(
-    products: list[dict[str, Any]], button_title: str = "Order this"
+    products: list[dict[str, Any]], button_title: str = "Order this", low_stock_label: str = ""
 ) -> dict[str, Any]:
     elements = []
     for p in products[:MAX_CAROUSEL_ELEMENTS]:
         price = f"₱{Decimal(str(p['price'])):,.2f}"
-        subtitle = f"{price} — {p['description']}" if p.get("description") else price
+        stock = p.get("stock")
+        hint = low_stock_label.replace("{n}", str(stock)) if low_stock_label and stock is not None and 0 < stock <= LOW_STOCK_AT else ""
+        head = f"{price} · {hint}" if hint else price  # the hint comes first so the 80-character limit never cuts it
+        subtitle = f"{head} — {p['description']}" if p.get("description") else head
         elements.append(
             {
                 "title": p["name"][:80],  # Meta limit: 80 characters
@@ -166,6 +178,6 @@ class MessengerService:
         return self._post_message(recipient_id, build_quick_replies_message(text, options, ask_phone))
 
     def send_product_carousel(
-        self, recipient_id: str, products: list[dict[str, Any]], button_title: str = "Order this"
+        self, recipient_id: str, products: list[dict[str, Any]], button_title: str = "Order this", low_stock_label: str = ""
     ) -> bool:
-        return self._post_message(recipient_id, build_product_carousel_message(products, button_title))
+        return self._post_message(recipient_id, build_product_carousel_message(products, button_title, low_stock_label))
