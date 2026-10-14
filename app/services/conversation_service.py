@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 from typing import Any
 
 from app.schemas.order import _PHONE_RE, OrderRequest
@@ -47,6 +48,8 @@ BYE_WORDS = {"bye", "goodbye", "bye bye", "babay", "paalam"}
 DELIVERY_FEE = Decimal("50")  # flat fee, used only while the owner has set no delivery areas
 DRAFT_EXPIRY_HOURS = 24  # an unfinished order is cleared after this long without a message from the customer
 SHOW_DISCLAIMER = True  # add the "automated assistant" note to the greeting and to FAQ answers
+QUOTE_MAX_ITEMS = 5  # cakes quoted in one price question
+QUOTE_MAX_QTY = 99  # a bigger number is treated as "no quantity given"
 PICKUP_LOCATION = "Pickup at shop"  # stored in orders.location for pick-up orders
 MAX_CAKES_PER_ORDER = 20  # all cakes together; the per-cake cap is MAX_QUANTITY_PER_ITEM in order_service
 MAX_NOTES_LENGTH = 200
@@ -290,6 +293,8 @@ class ConversationService:
                 replies = [Reply(text=t(draft.get("lang", "en"), "draft_expired"))] + replies
         if bot_back and replies:  # coming back from the owner: say that this is the automated assistant again
             replies = [Reply(text=t(draft.get("lang", "en"), "owner_back"))] + replies
+        if getattr(self, "_quote_store", None) is not None:  # the cakes of the latest price quote
+            draft["quote"] = self._quote_store
         draft["lang_seen"], draft["lang_cand"] = self._lang_seen, self._lang_cand  # survive resets
         draft["misses"] = self._prev_misses + 1 if self._missed else 0  # NEW (Edit 2.4)
         draft["touched"] = _stamp()
@@ -579,6 +584,8 @@ class ConversationService:
             return self._menu_replies(lang, available), state, draft
         if kind == "MY_ORDERS":
             return self._order_status_replies(lang), state, draft
+        if kind == "QUOTE_AREA":  # an area button under a price quote: add that area's delivery fee
+            return [self._quote_area_reply(lang, arg, draft, products)], state, draft
         if kind in ("CANCEL_ORDER", "CANCEL_ORDER_YES", "KEEP_ORDER"):  # cancel an order that is already placed
             return self._order_cancel_flow(kind, arg, lang), state, draft
         if kind == TALK_OWNER:
@@ -702,6 +709,10 @@ class ConversationService:
             return [Reply(text=t(lang, "small_talk"), options=self._start_options(lang))]
         if result.intent == Intent.ABOUT_BOT:
             return [Reply(text=t(lang, "about_bot"), options=self._start_options(lang))]
+        if result.intent == Intent.PRICE_QUESTION and result.items:
+            quote = self._quote_reply(lang, result.items, result.place, products)
+            if quote is not None:  # None = a plain "how much is X?", answered below as before
+                return [quote]
         if result.intent in (Intent.PRODUCT_QUESTION, Intent.PRICE_QUESTION):
             product = _find_product(result.product, products)
             if product is None:
@@ -740,6 +751,105 @@ class ConversationService:
         key = "fallback_again" if self._prev_misses else "fallback"
         options = self._owner_options(lang) if self._prev_misses else self._start_options(lang)  # 2nd miss: offer the owner
         return [Reply(text=t(lang, key), options=options)]
+
+    def _quote_reply(self, lang: str, raw_items, place: str | None, products, area: dict[str, Any] | None = None) -> Reply | None:
+        """Price (and delivery) quote for the cakes the customer asked about.
+
+        The AI only said which cakes, how many and where. Every name, price, stock count and fee below comes from
+        the database, and the reply repeats what was understood so a misread is easy to spot. Nothing is saved.
+        Returns None when this is a plain "how much is X?", which the normal price answer handles.
+        """
+        merged: dict[int, int | None] = {}
+        chosen: list[dict[str, Any]] = []
+        unknown: list[str] = []
+        for item in list(raw_items)[:QUOTE_MAX_ITEMS]:
+            product = _find_product(item.product, products)
+            if product is None:
+                unknown.append(str(item.product))
+                continue
+            qty = item.quantity if isinstance(item.quantity, int) and 1 <= item.quantity <= QUOTE_MAX_QTY else None
+            pid = int(product["product_id"])
+            if pid not in merged:
+                chosen.append(product)
+                merged[pid] = qty
+            elif qty is not None:  # the same cake named twice: add up
+                total_qty = (merged[pid] or 0) + qty
+                merged[pid] = total_qty if total_qty <= QUOTE_MAX_QTY else None
+        if not chosen:
+            return None
+        if len(chosen) == 1 and merged[int(chosen[0]["product_id"])] is None and not place and area is None and not unknown:
+            return None
+
+        body: list[str] = []
+        problems: list[str] = []
+        subtotal = Decimal(0)
+        complete = True  # every cake has a usable quantity
+        for product in chosen:
+            qty = merged[int(product["product_id"])]
+            if not product.get("is_available"):
+                problems.append(_unavailable_text(lang, product))
+                continue
+            if qty is None:
+                complete = False
+                body.append(t(lang, "quote_unit_line", name=product["name"], price=_peso(product["price"])))
+                continue
+            stock = product.get("stock")
+            if stock is not None and qty > stock:
+                problems.append(t(lang, "quote_over_stock", n=stock, name=product["name"]))
+                continue
+            line = Decimal(str(product["price"])) * qty
+            subtotal += line
+            body.append(t(lang, "quote_line", qty=qty, name=product["name"], amount=_peso(line)))
+        if unknown:
+            problems.append(t(lang, "quote_not_found", names=", ".join(unknown)[:60]))
+
+        options = self._start_options(lang)
+        head = [t(lang, "quote_header")] if body else []
+        if problems:
+            return Reply(text="\n".join(head + body + problems + [t(lang, "quote_no_total")]), options=options)
+        if not complete:
+            return Reply(text="\n".join(head + body + [t(lang, "quote_need_qty")]), options=options)
+
+        self._quote_store = [[int(p["product_id"]), merged[int(p["product_id"])]] for p in chosen]  # for the area buttons
+        lines = head + body + [t(lang, "quote_cakes", amount=_peso(subtotal))]
+        listed, other = self._delivery_areas()
+        ambiguous = False
+        if area is None and place and listed:
+            area, ambiguous = _match_area(place, listed)
+        buttons: list[tuple[str, str]] = []
+        if area is not None:
+            fee = Decimal(str(area["fee"]))
+            lines += [t(lang, "quote_delivery", area=area["name"], fee=_peso(fee)), t(lang, "quote_total", amount=_peso(subtotal + fee))]
+        elif ambiguous:
+            lines.append(t(lang, "delivery_area_pick", areas="\n".join(f"• {a['name']}" for a in listed)))
+            buttons = self._quote_area_buttons(listed)
+        elif place:
+            lines.append(t(lang, "delivery_area_other" if other else "delivery_area_no", place=place[:40]))
+        elif not listed and not other:  # flat-fee mode
+            lines.append(t(lang, "quote_flat", fee=_peso(DELIVERY_FEE), total=_peso(subtotal + DELIVERY_FEE)))
+        else:
+            lines.append(t(lang, "quote_ask_area"))
+            buttons = self._quote_area_buttons(listed)
+        lines += ["", t(lang, "quote_footer")]
+        return Reply(text="\n".join(lines), options=buttons + options)
+
+    @staticmethod
+    def _quote_area_buttons(listed: list[dict[str, Any]]) -> list[tuple[str, str]]:
+        """'Jaro ₱50' style quick replies (Messenger titles are 20 characters at most)."""
+        return [(f"{a['name']} ₱{Decimal(str(a['fee'])):g}"[:20], f"QUOTE_AREA:{a['id']}") for a in listed[:8]]
+
+    def _quote_area_reply(self, lang: str, raw_id: str, draft: dict[str, Any], products) -> Reply:
+        """The customer tapped an area under a quote: finish that quote with the area's delivery fee."""
+        listed, _ = self._delivery_areas()
+        try:
+            area = next((a for a in listed if int(a["id"]) == int(raw_id)), None)
+            items = [SimpleNamespace(product=p["name"], quantity=qty)
+                     for pid, qty in draft.get("quote") or []
+                     for p in products if int(p["product_id"]) == int(pid)]
+        except (TypeError, ValueError):
+            area, items = None, []
+        quote = self._quote_reply(lang, items, None, products, area=area) if area and items else None
+        return quote or Reply(text=t(lang, "quote_lost"), options=self._start_options(lang))
 
     def _handoff_text(self, lang: str) -> str:
         """Tell the customer when to expect the owner: soon while open, at reopening time while closed."""

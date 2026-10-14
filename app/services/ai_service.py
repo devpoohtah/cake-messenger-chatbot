@@ -37,6 +37,13 @@ class Intent(str, Enum):
 class AIUnavailableError(Exception):
     """The AI call failed (network, quota, bad response). Not the same as 'unknown question'."""
 
+class QuoteItem(BaseModel):
+    """One cake in a price question: the exact menu name and how many (null when the customer gave no number)."""
+
+    product: str
+    quantity: int | None = None
+
+
 class AIResult(BaseModel):
     intent: Intent
     product: str | None = None
@@ -47,6 +54,7 @@ class AIResult(BaseModel):
     faq_topic: str | None = None
     language: str | None = None  # "en", "tl" or "hil"; null when unclear
     place: str | None = None  # delivery questions: the place or area the customer asked about
+    items: list[QuoteItem] | None = None  # price questions: every cake the customer named
 
 
 SYSTEM_PROMPT = """You read one customer message for a small cake shop's Messenger chatbot and return JSON only.
@@ -59,7 +67,7 @@ Intents:
 - small_talk: friendly chit-chat unrelated to the shop (how are you, compliments, jokes, the weather, random chatter)
 - about_bot: asks who or what they are talking to, or whether it is a bot or a real person
 - talk_to_owner: wants to speak with the shop owner or a real person instead of the bot, or asks for the owner to contact them (not a question about who the owner is)
-- price_question: asks about the price of a cake
+- price_question: asks about the price or the total of one or more cakes, with or without delivery
 - ordering_info: asks how to order
 - faq_question: asks about the shop other than cakes and prices (payment, hours, delivery, and so on). Set faq_topic ONLY when the question is clearly about that topic's description. Never pick the closest-sounding topic. If you are unsure, or no topic clearly fits, set faq_topic to null.
 - thanks: says thanks or goodbye (thank you, ty, salamat, daghang salamat, bye)
@@ -72,6 +80,9 @@ Intents:
 
 Examples:
 - "magkano ang leche flan" and "tag-pila ang leche flan" are price_question
+- "how much for 3 yema cakes delivered to Molo?" is price_question with items [Yema Cake x3] and place "Molo"
+- "3 yema and 1 mango float, how much in all?" is price_question with items [Yema Cake x3, Mango Float x1]
+- "pila ang 2 leche flan?" is price_question with items [Leche Flan x2]
 - "gusto ko mag-order" is start_order
 - "cash lang ba?" and "pwede ba GCash?" are faq_question about payment
 - "anong oras kayo bukas", "are you open today?", "bukas ba kayo ngayon?", "open pa ba kayo?" and "why are you closed?" are faq_question about opening hours
@@ -96,9 +107,10 @@ Examples:
 Field rules:
 - product: use the EXACT name from the available products list that matches what the customer means, otherwise null.
 - quantity: a whole number only if the customer stated one, otherwise null.
+- items: only for a price_question. One entry per cake the customer named, each with product (the EXACT name from the available products list) and quantity (a whole number only if stated, otherwise null). Never add a cake the customer did not name. Also set product and quantity from the first entry. Otherwise null.
 - customer_name, contact_number, location: only if the customer stated them in this message. Never guess or invent values.
 - faq_topic: only for faq_question. An exact key from the FAQ topics list, and only when the question is clearly about that topic. Otherwise null. A wrong topic is worse than null.
-- place: only for a faq_question about delivery, when the customer names a place, barangay, district or city. Copy it exactly as written, otherwise null.
+- place: only for a faq_question about delivery, or a price_question that mentions delivery, when the customer names a place, barangay, district or city. Copy it exactly as written, otherwise null.
 - language: "en" for English, "tl" for Tagalog/Filipino/Taglish, "hil" for Hiligaynon. Use null if you cannot tell (for example a single number or a very short message).
   Hiligaynon clues: kamo, subong, sang, nga, pila, tag-pila, diin, indi, wala sing, palihog, gid, daw, and verbs like nagadeliver or ga-deliver. Tagalog clues: kayo, ngayon, po, opo, magkano, saan, hindi, naman, nasaan, pwede ba. Pick the language whose clues appear, even for a short message, and use null only when there are none (or when both appear equally).
 - Never answer the customer yourself and never state prices or shop policies. Return only the JSON fields.
@@ -119,8 +131,9 @@ class AIService(ABC):
 
 
 class GeminiAIService(AIService):
-    def __init__(self) -> None:
+    def __init__(self, model: str | None = None) -> None:
         self._client: genai.Client | None = None
+        self._model = model  # None = the GEMINI_MODEL setting
 
     def _get_client(self) -> genai.Client:
         if self._client is None:
@@ -146,12 +159,13 @@ class GeminiAIService(AIService):
         )
         try:
             response = self._get_client().models.generate_content(
-                model=get_settings().gemini_model,
+                model=self._model or get_settings().gemini_model,
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     system_instruction=SYSTEM_PROMPT,
                     response_mime_type="application/json",
                     response_schema=AIResult,
+                    temperature=0,  # the same message should always be read the same way
                 ),
             )
             return AIResult.model_validate_json(response.text)

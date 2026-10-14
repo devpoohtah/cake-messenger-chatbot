@@ -1,0 +1,134 @@
+"""Check the real AI against customer messages whose correct reading is already known.
+
+The pytest tests use a fake AI, so they prove the backend is right but cannot tell whether Gemini really understands
+your customers. This script can. It calls the real model (a few cents per run), so it is NOT part of `pytest`.
+
+    python -m evals.ai_regression
+    python -m evals.ai_regression --model gemini-2.5-flash --delay 0.5 --min-accuracy 90
+
+Add real customer messages to evals/messages.json (copy them from the Messenger inbox, with the reading you expect).
+Run it before you change the prompt or the model, and again after: if the score drops, your change caused it.
+
+Only the fields written for a message are checked: language, intent, faq_topic, product, place and items.
+It uses the built-in FAQ topics, so it may differ slightly from a shop whose FAQ answers were edited in the dashboard.
+"""
+import argparse
+import json
+import logging
+import sys
+import time
+from collections import defaultdict
+from pathlib import Path
+from typing import Any, Callable
+
+from app.services.ai_service import AIResult, AIUnavailableError, GeminiAIService
+from app.services.faq import FAQS
+
+DEFAULT_FILE = Path(__file__).with_name("messages.json")
+FIELDS = ("language", "intent", "faq_topic", "product", "place", "items")
+
+
+def load_cases(path: Path | str = DEFAULT_FILE) -> tuple[list[str], list[dict[str, Any]]]:
+    """The menu names the AI is given, and the list of test messages."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return list(data["menu"]), list(data["cases"])
+
+
+def _items(items: Any) -> list[tuple[str, int | None]]:
+    """Cakes as comparable (name, quantity) pairs, in a fixed order."""
+    pairs = []
+    for item in items or []:
+        name, qty = (item["product"], item.get("quantity")) if isinstance(item, dict) else (item.product, item.quantity)
+        pairs.append((str(name).strip().lower(), qty))
+    return sorted(pairs, key=lambda pair: (pair[0], -1 if pair[1] is None else pair[1]))
+
+
+def _normal(field: str, value: Any) -> Any:
+    if field == "items":
+        return _items(value)
+    if field == "intent" and hasattr(value, "value"):
+        value = value.value
+    return value.strip().lower() if isinstance(value, str) else value
+
+
+def compare(result: AIResult, expected: dict[str, Any]) -> list[tuple[str, Any, Any]]:
+    """Where the AI's reading differs from the expected one: (field, expected, got). Unlisted fields are not checked."""
+    wrong = []
+    for field in FIELDS:
+        if field in expected:
+            want, got = _normal(field, expected[field]), _normal(field, getattr(result, field))
+            if want != got:
+                wrong.append((field, want, got))
+    return wrong
+
+
+def run(service: Any, menu: list[str], topics: dict[str, str], cases: list[dict[str, Any]],
+        delay: float = 0.0, sleep: Callable[[float], None] = time.sleep) -> list[dict[str, Any]]:
+    """Send every message to the AI. Each outcome has the case, the differences found, and any error."""
+    outcomes = []
+    for index, case in enumerate(cases):
+        if index and delay:
+            sleep(delay)
+        try:
+            result = service.interpret_message(case["text"], "idle", menu, topics)
+            outcomes.append({"case": case, "wrong": compare(result, case["expect"]), "error": None})
+        except AIUnavailableError:
+            outcomes.append({"case": case, "wrong": [], "error": "the AI call failed"})
+    return outcomes
+
+
+def _right(outcome: dict[str, Any]) -> bool:
+    return not outcome["wrong"] and outcome["error"] is None
+
+
+def accuracy(outcomes: list[dict[str, Any]]) -> float:
+    """Percent of messages read completely right."""
+    return 100.0 * sum(_right(o) for o in outcomes) / len(outcomes) if outcomes else 0.0
+
+
+def report(outcomes: list[dict[str, Any]]) -> str:
+    by_language: dict[str, list[bool]] = defaultdict(list)
+    by_field: dict[str, list[bool]] = defaultdict(list)
+    for o in outcomes:
+        by_language[o["case"]["expect"].get("language", "?")].append(_right(o))
+        wrong_fields = {field for field, _, _ in o["wrong"]}
+        for field in o["case"]["expect"]:
+            by_field[field].append(o["error"] is None and field not in wrong_fields)
+    pct = lambda flags: f"{100 * sum(flags) / len(flags):.0f}% ({sum(flags)}/{len(flags)})"  # noqa: E731
+    lines = [f"Messages read completely right: {accuracy(outcomes):.0f}% ({sum(_right(o) for o in outcomes)}/{len(outcomes)})", "", "By language:"]
+    lines += [f"  {lang}: {pct(flags)}" for lang, flags in sorted(by_language.items())]
+    lines += ["", "By field:"] + [f"  {field}: {pct(flags)}" for field, flags in sorted(by_field.items())]
+    failures = [o for o in outcomes if not _right(o)]
+    if failures:
+        lines += ["", "Differences:"]
+        for o in failures:
+            lines.append(f"  \"{o['case']['text']}\"")
+            lines += [f"      {field}: expected {want!r}, got {got!r}" for field, want, got in o["wrong"]]
+            if o["error"]:
+                lines.append(f"      error: {o['error']}")
+    return "\n".join(lines)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Check the real AI against known customer messages.")
+    parser.add_argument("--file", default=str(DEFAULT_FILE), help="JSON file of messages (default: evals/messages.json)")
+    parser.add_argument("--model", default=None, help="Gemini model to test (default: the GEMINI_MODEL setting)")
+    parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait between messages (rate limits)")
+    parser.add_argument("--min-accuracy", type=float, default=0.0, help="exit with an error below this percent")
+    args = parser.parse_args(argv)
+
+    menu, cases = load_cases(args.file)
+    topics = {topic: row["description"] for topic, row in FAQS.items()}
+    logging.disable(logging.CRITICAL)  # the report lists every failure; skip one log line per failed call
+    try:
+        outcomes = run(GeminiAIService(args.model), menu, topics, cases, args.delay)
+    finally:
+        logging.disable(logging.NOTSET)
+    print(report(outcomes))
+    if outcomes and all(o["error"] for o in outcomes):
+        print("\nEvery AI call failed. Check that GEMINI_API_KEY is set in .env and that you are online.")
+    return 1 if accuracy(outcomes) < args.min_accuracy else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
