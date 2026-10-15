@@ -49,6 +49,12 @@
   {"text": "gusto ko makigsulti sa owner", "expect": {"language": "hil", "intent": "talk_to_owner"}},
   {"text": "may ube cake kamo?", "expect": {"language": "hil", "intent": "not_sold"}},
   {"text": "gusto ko mag-order sang 2 leche flan", "expect": {"language": "hil", "intent": "start_order", "product": "Leche Flan"}},
-  {"text": "salamat gid", "expect": {"language": "hil", "intent": "thanks"}}
+  {"text": "salamat gid", "expect": {"language": "hil", "intent": "thanks"}},
+  {"text": "I want 2 nutella and 2 leche flan", "expect": {"language": "en", "intent": "start_order", "items": [{"product": "Nutella Ferrero Cake", "quantity": 2}, {"product": "Leche Flan", "quantity": 2}]}},
+  {"text": "gusto ko pong umorder ng 2 nutella at 2 leche flan", "expect": {"language": "tl", "intent": "start_order", "items": [{"product": "Nutella Ferrero Cake", "quantity": 2}, {"product": "Leche Flan", "quantity": 2}]}},
+  {"text": "gusto ko mag-order sang 2 nutella kag 2 leche flan", "expect": {"language": "hil", "intent": "start_order", "items": [{"product": "Nutella Ferrero Cake", "quantity": 2}, {"product": "Leche Flan", "quantity": 2}]}},
+  {"text": "1 of each", "expect": {"language": "en", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
+  {"text": "tig-isa po", "expect": {"language": "tl", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
+  {"text": "tag-isa gid", "expect": {"language": "hil", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]}
  ]
 }

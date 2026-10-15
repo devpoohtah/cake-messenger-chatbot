@@ -19,8 +19,9 @@ def test_starter_file_is_well_formed():
     valid_intents = {i.value for i in Intent}
     for c in cases:
         exp = c["expect"]
-        assert exp["language"] in LANGS and exp["intent"] in valid_intents, c
-        if exp["intent"] == "faq_question":
+        assert exp["language"] in LANGS and exp.get("intent", "greeting") in valid_intents, c
+        assert set(c.get("asked_for", [])) <= set(menu), c
+        if exp.get("intent") == "faq_question":
             assert exp["faq_topic"] in FAQS, c
         for item in exp.get("items", []):
             assert item["product"] in menu, c
@@ -37,7 +38,7 @@ def test_each_language_has_enough_messages(lang):
 def test_the_price_scenarios_are_covered_in_every_language():
     _, cases = reg.load_cases()
     for lang in LANGS:
-        quotes = [c["expect"] for c in cases if c["expect"]["language"] == lang and c["expect"]["intent"] == "price_question"]
+        quotes = [c["expect"] for c in cases if c["expect"]["language"] == lang and c["expect"].get("intent") == "price_question"]
         assert any(len(q["items"]) == 2 for q in quotes), lang  # two different cakes
         assert any(q.get("place") for q in quotes), lang  # delivered to a place
         assert any(q["items"][0]["quantity"] is None for q in quotes), lang  # no quantity
@@ -80,16 +81,17 @@ class ScriptedAI:
     """Answers every message with the expected reading, except where told otherwise."""
 
     def __init__(self, cases, breakages=None):
-        self.cases, self.breakages, self.calls = {c["text"]: c["expect"] for c in cases}, breakages or {}, []
+        self.cases, self.breakages, self.calls, self.contexts = {c["text"]: c["expect"] for c in cases}, breakages or {}, [], {}
 
-    def interpret_message(self, text, state, menu, topics):
+    def interpret_message(self, text, state, menu, topics, context=None):
         self.calls.append((text, state, menu, topics))
+        self.contexts[text] = context
         if text in self.breakages:
             if self.breakages[text] == "down":
                 raise AIUnavailableError
             return self.breakages[text]
         e = self.cases[text]
-        return AIResult(intent=Intent(e["intent"]), language=e["language"], faq_topic=e.get("faq_topic"), place=e.get("place"),
+        return AIResult(intent=Intent(e.get("intent", "greeting")), language=e["language"], faq_topic=e.get("faq_topic"), place=e.get("place"),
                         product=e.get("product"), items=[QuoteItem(**i) for i in e["items"]] if "items" in e else None)
 
 
@@ -131,8 +133,8 @@ def test_main_returns_an_error_code_below_the_minimum(monkeypatch, tmp_path, cap
             models.append(model)
             self._ai = ScriptedAI(cases[:3], broken)
 
-        def interpret_message(self, *args):
-            return self._ai.interpret_message(*args)
+        def interpret_message(self, *args, **kwargs):
+            return self._ai.interpret_message(*args, **kwargs)
 
     monkeypatch.setattr(reg, "GeminiAIService", FakeGemini)
     assert reg.main(["--file", str(path), "--model", "gemini-x"]) == 0  # no minimum asked for
@@ -156,3 +158,57 @@ def test_when_every_call_fails_the_report_suggests_checking_the_key(monkeypatch,
     monkeypatch.setattr(reg, "GeminiAIService", Down)
     assert reg.main(["--file", str(path), "--min-accuracy", "1"]) == 1
     assert "GEMINI_API_KEY" in capsys.readouterr().out
+
+
+def test_short_replies_are_sent_with_the_cakes_that_were_asked_about():
+    menu, cases = reg.load_cases()
+    asked = [c for c in cases if c.get("asked_for")]
+    assert len(asked) >= 3
+    ai = ScriptedAI(cases)
+    reg.run(ai, menu, {}, asked)
+    for c in asked:
+        assert "Mango Float" in ai.contexts[c["text"]] and "Yema Cake" in ai.contexts[c["text"]]
+    plain = [c for c in cases if not c.get("asked_for")][:2]
+    reg.run(ai, menu, {}, plain)
+    assert all(ai.contexts[c["text"]] is None for c in plain)
+
+
+def test_multi_cake_ordering_sentences_are_covered_in_every_language():
+    _, cases = reg.load_cases()
+    for lang in LANGS:
+        orders = [c["expect"] for c in cases if c["expect"]["language"] == lang and c["expect"].get("intent") == "start_order" and len(c["expect"].get("items", [])) == 2]
+        assert orders, lang
+
+
+class _Rejected(Exception):
+    code, status = 429, "RESOURCE_EXHAUSTED"
+
+
+def test_failures_are_grouped_by_cause_and_a_rate_limit_gets_advice():
+    menu, cases = reg.load_cases()
+
+    class Limited:
+        def interpret_message(self, *args, **kwargs):
+            try:
+                raise _Rejected("secret details that must not be shown")
+            except _Rejected as exc:
+                raise AIUnavailableError from exc
+
+    text = reg.report(reg.run(Limited(), menu, {}, cases[:3]))
+    assert "_Rejected 429 RESOURCE_EXHAUSTED x3" in text and "--delay 5" in text and "secret details" not in text
+
+
+def test_show_errors_prints_what_google_said_once_per_kind_of_failure():
+    menu, cases = reg.load_cases()
+
+    class Rejected:
+        def interpret_message(self, *args, **kwargs):
+            try:
+                raise _Rejected("INVALID_ARGUMENT: the explanation")
+            except _Rejected as exc:
+                raise AIUnavailableError from exc
+
+    outcomes = reg.run(Rejected(), menu, {}, cases[:3])
+    assert "the explanation" not in reg.report(outcomes)  # hidden unless asked for
+    shown = reg.report(outcomes, show_details=True)
+    assert shown.count("the explanation") == 1 and "_Rejected 429 RESOURCE_EXHAUSTED: " in shown

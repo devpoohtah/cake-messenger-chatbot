@@ -4,228 +4,466 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Mrs Brave's Cake – Admin</title>
+<script>
+(function () {
+  var t = null;
+  try { t = localStorage.getItem("theme"); } catch (_) {}
+  if (!t) t = window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  document.documentElement.dataset.theme = t;
+})();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.19.0/dist/tabler-icons.min.css">
 <style>
-:root{--bg:#faf7f5;--card:#fff;--text:#2b2220;--muted:#7a6e69;--line:#eadfd9;--accent:#c2410c;--ok:#15803d;--warn:#b45309;--bad:#b91c1c}
-@media (prefers-color-scheme:dark){:root{--bg:#1c1816;--card:#262120;--text:#f3ece8;--muted:#a89c96;--line:#3a3230;--accent:#fb923c;--ok:#4ade80;--warn:#fbbf24;--bad:#f87171}}
+:root{
+  --bg:#e6e8ef;--dk:#c5c9d6;--lt:#ffffff;--tx:#1f2027;--mu:#7b8091;
+  --ac:#d4507c;--ink:#1f2027;--on-ink:#ffffff;
+  --ok:#2f9e6b;--warn:#b7791f;--bad:#c0392b;--ov:rgba(230,232,239,.78);
+  --raise:6px 6px 12px var(--dk),-6px -6px 12px var(--lt);
+  --raise-s:3px 3px 6px var(--dk),-3px -3px 6px var(--lt);
+  --sink:inset 5px 5px 10px var(--dk),inset -5px -5px 10px var(--lt);
+  --sink-s:inset 3px 3px 6px var(--dk),inset -3px -3px 6px var(--lt);
+  color-scheme:light;
+}
+:root[data-theme="dark"]{
+  --bg:#25262d;--dk:#17181d;--lt:#34353f;--tx:#ececf2;--mu:#9a9eb0;
+  --ac:#ef6f9a;--ink:#f2f2f7;--on-ink:#1c1d23;
+  --ok:#4cc38a;--warn:#e0b050;--bad:#f0776a;--ov:rgba(18,19,24,.72);
+  color-scheme:dark;
+}
 *{box-sizing:border-box}
-body{margin:0;font:15px/1.4 system-ui,sans-serif;background:var(--bg);color:var(--text)}
-header{padding:16px 24px;border-bottom:1px solid var(--line);background:var(--card)}
-header h1{margin:0;font-size:18px}
-main{max-width:1100px;margin:0 auto;padding:20px 24px}
-.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:20px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
-.card b{display:block;font-size:24px}
-.card span{color:var(--muted);font-size:13px}
-nav{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
-nav button{padding:8px 14px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
-nav button.on{background:var(--accent);border-color:var(--accent);color:#fff}
-nav button:disabled{opacity:.5;cursor:not-allowed}
-.wrap{overflow-x:auto}
-table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px}
-th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:12px;color:var(--muted);text-transform:uppercase}
-.tag{padding:2px 8px;border-radius:99px;font-size:12px;border:1px solid var(--line)}
-.pending{color:var(--warn)}.completed{color:var(--ok)}.cancelled{color:var(--bad)}
-select,input,textarea{font:inherit;padding:5px;background:var(--bg);color:var(--text);border:1px solid var(--line);border-radius:6px}
-.hidden{display:none}
-.muted{color:var(--muted);font-size:13px}
-.faqs{display:grid;gap:12px;margin-bottom:12px}
-.faq h3{margin:0 0 8px}
-.faq label{display:block;margin:10px 0;font-size:13px}
-.faq textarea,.faq input{display:block;width:100%;margin-top:4px}
-.faq button{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
-.faq button.danger{color:var(--bad)}
-#inboxTab.alert{border-color:var(--bad);color:var(--bad);font-weight:600}
-#inboxTab.on.alert{color:#fff}
-.wants{color:var(--bad);font-weight:600}
-.thumb{width:76px;height:40px;object-fit:cover;border-radius:6px;border:1px solid var(--line);display:block}
-.thumb.none{display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:11px}
-.cakeform{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px;align-items:end}
-.cakeform label{display:block;font-size:13px}
-.cakeform input{display:block;width:100%;margin-top:4px;box-sizing:border-box}
-.cakeform button,.photo-btn{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
-.soldout{color:var(--bad);font-weight:600;font-size:12px}
-.inbox-actions button{padding:5px 10px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer;margin:0 4px 4px 0}
-.calhead{display:flex;align-items:center;gap:10px;margin-bottom:10px}
-.calhead b{min-width:160px;text-align:center}
-.calhead button,.shopbtn,#lockBtn{padding:6px 12px;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer}
-.calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px}
-.cal-dow{font-size:12px;color:var(--muted);text-align:center;text-transform:uppercase}
-.cal-day{position:relative;min-height:64px;padding:6px;text-align:left;border:1px solid var(--line);border-radius:8px;background:var(--bg);color:var(--text);cursor:pointer;font:inherit}
+html{scroll-padding-top:12px}
+body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 "DM Sans",system-ui,sans-serif;min-height:100vh}
+button,input,select,textarea{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px}
+.hidden{display:none!important}
+.muted{color:var(--mu);font-size:12px}
+.sr{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+i.ti{font-size:18px;line-height:1;vertical-align:-3px}
+
+.app{display:grid;grid-template-columns:220px minmax(0,1fr);gap:22px;padding:22px;max-width:1440px;margin:0 auto}
+.side{position:sticky;top:22px;height:calc(100vh - 44px);display:flex;flex-direction:column;gap:6px;padding:16px 12px;border-radius:20px;background:var(--bg);box-shadow:var(--raise);z-index:900}
+.logo{display:flex;align-items:center;gap:10px;padding:4px 8px 16px;font-weight:500;line-height:1.2}
+.logo .mark{width:40px;height:40px;border-radius:12px;display:flex;align-items:center;justify-content:center;box-shadow:var(--sink-s);color:var(--ac);flex:none}
+.logo .mark i{font-size:22px}
+.logo small{display:block;color:var(--mu);font-weight:400;font-size:12px}
+.item{display:flex;align-items:center;gap:10px;width:100%;padding:11px 12px;border:0;border-radius:12px;background:transparent;color:var(--mu);cursor:pointer;text-align:left;transition:color .15s}
+.item:hover{color:var(--tx)}
+.item.on{color:var(--ac);box-shadow:var(--sink-s);font-weight:500}
+.item .bd{margin-left:auto;min-width:20px;padding:0 6px;border-radius:99px;background:var(--ink);color:var(--on-ink);font-size:11px;text-align:center;line-height:20px}
+.item.alert .bd{background:var(--bad);color:#fff}
+.scrim{display:none}
+
+.main{min-width:0;display:flex;flex-direction:column;gap:20px}
+.top{display:flex;align-items:center;gap:12px;padding:12px 18px;border-radius:18px;background:var(--bg);box-shadow:var(--raise)}
+.top h1{margin:0 auto 0 0;font-size:18px;font-weight:500}
+.menu{display:none}
+.ib{position:relative;width:38px;height:38px;flex:none;border:0;border-radius:50%;background:var(--bg);color:var(--tx);display:inline-flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:var(--raise-s)}
+.ib:active{box-shadow:var(--sink-s)}
+.ib.sm{width:32px;height:32px}
+.ib.sm i{font-size:16px}
+.ib.dg{color:var(--bad)}
+.ib .pip{position:absolute;top:6px;right:7px;width:9px;height:9px;border-radius:50%;background:var(--bad)}
+
+.btn{display:inline-flex;align-items:center;gap:7px;padding:10px 16px;border:0;border-radius:12px;background:var(--bg);color:var(--tx);cursor:pointer;box-shadow:var(--raise-s);white-space:nowrap}
+.btn:active{box-shadow:var(--sink-s)}
+.btn.pri{background:var(--ink);color:var(--on-ink)}
+.btn.pri:active{box-shadow:inset 2px 2px 5px rgba(0,0,0,.45)}
+.btn.dg{color:var(--bad)}
+.btn.sm{padding:7px 12px;font-size:13px}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+
+.fld{display:block;width:100%;padding:10px 14px;border:0;border-radius:12px;background:var(--bg);color:var(--tx);box-shadow:var(--sink-s);outline-offset:2px}
+.fld::placeholder{color:var(--mu)}
+textarea.fld{resize:vertical;min-height:70px}
+select.fld{appearance:none;padding-right:34px;cursor:pointer;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%238a8fa0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center}
+select.fld option{background:var(--bg);color:var(--tx)}
+input[type=file].fld{padding:7px 10px}
+input[type=file]::file-selector-button{border:0;margin-right:10px;padding:6px 12px;border-radius:9px;background:var(--bg);color:var(--tx);box-shadow:var(--raise-s);cursor:pointer}
+.fld.auto{width:auto;display:inline-block}
+label.f{display:block;margin-bottom:14px;color:var(--mu);font-size:13px}
+label.f .fld{margin-top:6px;color:var(--tx);font-size:14px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:0 14px}
+
+input.sw{appearance:none;position:relative;width:46px;height:26px;margin:0;border-radius:99px;background:var(--bg);box-shadow:var(--sink-s);cursor:pointer;flex:none;vertical-align:middle}
+input.sw::after{content:"";position:absolute;top:3px;left:4px;width:20px;height:20px;border-radius:50%;background:var(--bg);box-shadow:2px 2px 4px var(--dk),-1px -1px 3px var(--lt);transition:transform .18s,background .18s}
+input.sw:checked::after{transform:translateX(18px);background:var(--ac)}
+
+.panel{padding:18px;border-radius:20px;background:var(--bg);box-shadow:var(--raise)}
+.panel h2{margin:0 0 4px;font-size:16px;font-weight:500}
+.panel>p.muted{margin:0 0 14px}
+.panel+.panel{margin-top:20px}
+.stack{display:flex;flex-direction:column;gap:20px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:18px}
+.stat{display:flex;align-items:center;gap:12px;padding:16px;border-radius:18px;background:var(--bg);box-shadow:var(--raise)}
+.stat .ic{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;box-shadow:var(--sink-s);color:var(--ac);flex:none}
+.stat b{display:block;font-size:20px;font-weight:500;line-height:1.2}
+.stat span{color:var(--mu);font-size:12px}
+
+.toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:16px}
+.toolbar .grow{flex:1;min-width:180px;position:relative}
+.toolbar .grow i{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--mu)}
+.toolbar .grow .fld{padding-left:38px}
+.toolbar .fld.auto{min-width:150px}
+
+.wrap{overflow-x:auto;padding:4px 8px 10px;margin:-4px -8px}
+.tr{display:grid;gap:12px;align-items:center;padding:12px 16px;margin-bottom:12px;border-radius:14px;background:var(--bg);box-shadow:var(--raise-s)}
+.tr.head{background:transparent;box-shadow:none;color:var(--mu);font-size:12px;padding-top:0;padding-bottom:0;margin-bottom:8px}
+.tr small{display:block;color:var(--mu);font-size:12px}
+.g-orders{grid-template-columns:40px 92px minmax(120px,1fr) minmax(150px,1.4fr) 92px 140px 150px 44px;min-width:900px}
+.g-day{grid-template-columns:40px 70px minmax(120px,1fr) minmax(140px,1.4fr) 92px 130px;min-width:640px}
+.g-prod{grid-template-columns:86px minmax(130px,1.4fr) 100px 110px 60px 100px;min-width:720px}
+.g-area{grid-template-columns:minmax(140px,1.4fr) 140px 60px 44px;min-width:460px}
+.g-inbox{grid-template-columns:130px 110px minmax(100px,.8fr) minmax(160px,2fr) 210px;min-width:820px}
+.g-missed{grid-template-columns:110px 90px minmax(140px,1fr);min-width:420px}
+.g-unans{grid-template-columns:70px minmax(160px,1fr);min-width:300px}
+.empty{display:flex;align-items:center;justify-content:center;gap:10px;padding:26px;color:var(--mu)}
+.empty i{font-size:22px}
+.spin{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+.tag{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:99px;font-size:12px;box-shadow:var(--sink-s)}
+.tag i{font-size:14px}
+.wants{color:var(--bad);font-weight:500}
+.soldout{color:var(--bad);font-weight:500;font-size:12px}
+select.stat-sel{padding:8px 30px 8px 12px;font-size:13px}
+.s-pending{color:var(--warn)}.s-confirmed{color:var(--tx)}.s-preparing,.s-ready,.s-out_for_delivery{color:var(--ac)}.s-completed{color:var(--ok)}.s-cancelled{color:var(--bad)}
+.thumb{width:76px;height:42px;border-radius:9px;object-fit:cover;display:flex;align-items:center;justify-content:center;box-shadow:var(--raise-s);color:var(--mu)}
+.thumb.none{box-shadow:var(--sink-s)}
+.rowact{display:flex;gap:8px;justify-content:flex-end}
+.mark-dot{position:absolute;top:5px;right:5px;width:8px;height:8px;border-radius:50%;background:var(--ac)}
+
+.calhead{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.calhead b{min-width:150px;text-align:center;font-weight:500}
+.calgrid{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:10px}
+.cal-dow{font-size:12px;color:var(--mu);text-align:center;padding-bottom:2px}
+.cal-day{position:relative;min-height:66px;padding:8px;text-align:left;border:0;border-radius:12px;background:var(--bg);cursor:pointer;box-shadow:var(--raise-s)}
+.cal-day:active,.cal-day.sel{box-shadow:var(--sink-s)}
 .cal-day.past{opacity:.55}
-.cal-day.today{outline:2px solid var(--accent)}
-.cal-day.locked{background:rgba(185,28,28,.12);border-color:var(--bad)}
-.cal-day.sel{box-shadow:0 0 0 2px var(--accent) inset}
-.cal-day .lock{position:absolute;top:4px;right:6px;line-height:0;color:var(--bad)}
-.cal-day .n{display:block;margin-top:6px;font-size:12px;color:var(--muted)}
-.shoprow{display:flex;flex-wrap:wrap;gap:12px;align-items:end;margin-top:10px}
-.shoprow label{font-size:13px}
-.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;background:var(--ok)}
+.cal-day.today>span:first-child{color:var(--ac);font-weight:700}
+.cal-day.locked{color:var(--bad);box-shadow:var(--sink-s)}
+.cal-day .lock{position:absolute;top:7px;right:8px;line-height:0;color:var(--bad)}
+.cal-day .lock i{font-size:15px}
+.cal-day .n{display:block;margin-top:6px;font-size:11px;color:var(--mu)}
+.shoprow{display:flex;flex-wrap:wrap;gap:14px 18px;align-items:center}
+.shoprow label{display:flex;align-items:center;gap:8px;font-size:13px}
+.dot{display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:8px;background:var(--ok)}
 .dot.off{background:var(--bad)}
-#dayTitle svg{vertical-align:-2px;color:var(--bad)}
-#lockBtn.is-locked{border-color:var(--bad);color:var(--bad)}
+#dayTitle{display:flex;align-items:center;gap:8px}
+#dayTitle i{color:var(--bad)}
+#lockBtn.is-locked{color:var(--bad)}
+#shopState{display:flex;align-items:center;margin:0 0 14px;font-size:13px}
+
+.faqs{display:grid;gap:20px;margin-bottom:20px}
+.faq h3{margin:0 0 12px;font-size:15px;font-weight:500}
+.faq .btns{display:flex;gap:12px;margin-top:4px}
+
+.mo{position:fixed;inset:0;z-index:1000;display:none;align-items:center;justify-content:center;padding:16px;overflow:auto;background:var(--ov)}
+.mo.show{display:flex}
+.modal{width:100%;max-width:480px;max-height:92vh;overflow:auto;padding:22px;border-radius:22px;background:var(--bg);box-shadow:var(--raise)}
+.modal.wide{max-width:560px}
+.mhead{display:flex;align-items:center;gap:12px;margin-bottom:16px}
+.mhead h2{margin:0 auto 0 0;font-size:17px;font-weight:500}
+.mfoot{display:flex;gap:12px;justify-content:flex-end;margin-top:6px}
+.kv{display:grid;grid-template-columns:110px minmax(0,1fr);gap:10px 14px;margin:0 0 16px}
+.kv dt{color:var(--mu)}
+.kv dd{margin:0;word-break:break-word}
+.feebox{display:flex;gap:10px;align-items:center}
+.feebox .fld{width:110px}
+
+body .swal2-container.swal2-backdrop-show,body .swal2-container.swal2-noanimation{background:var(--ov)}
+body .swal2-popup{background:var(--bg);color:var(--tx);border-radius:22px;box-shadow:var(--raise);font-family:inherit;padding:26px 22px 22px}
+body .swal2-popup .swal2-title{color:var(--tx);font-size:18px;font-weight:500;padding:0}
+body .swal2-popup .swal2-html-container{color:var(--mu);font-size:14px;margin:8px 0 0}
+body .swal2-popup .swal2-actions{margin:20px 0 0;gap:12px}
+body .swal2-popup .swal2-icon{width:58px;height:58px;margin:0 auto 14px;border:0;box-shadow:var(--sink);color:var(--ac)}
+body .swal2-popup .swal2-icon .swal2-icon-content{font-size:26px;display:flex}
+body .swal2-popup .swal2-icon.swal2-warning,body .swal2-popup .swal2-icon.swal2-error{color:var(--bad)}
+body .swal2-popup .swal2-icon.swal2-success{color:var(--ok)}
+body .swal2-popup .swal2-icon.swal2-question{color:var(--ac)}
+body .swal2-popup .swal2-icon .swal2-icon-content i.ti{font-size:26px}
+body .swal2-popup.swal2-toast{background:var(--bg);box-shadow:var(--raise);border-radius:14px;padding:10px 18px 10px 12px;width:auto;max-width:92vw}
+body .swal2-popup.swal2-toast .swal2-title{font-size:14px;margin:0 0 0 4px;color:var(--tx)}
+body .swal2-popup.swal2-toast .swal2-icon{width:28px;height:28px;min-width:28px;margin:0 6px 0 0;box-shadow:var(--sink-s)}
+body .swal2-popup.swal2-toast .swal2-icon .swal2-icon-content{font-size:16px}
+body .swal2-popup.swal2-toast .swal2-icon .swal2-icon-content i.ti{font-size:16px}
+
+@media (max-width:860px){
+  .app{grid-template-columns:minmax(0,1fr);padding:12px;gap:14px}
+  .side{position:fixed;left:12px;top:12px;bottom:12px;height:auto;width:240px;transform:translateX(-130%);transition:transform .22s}
+  .side.open{transform:none}
+  .scrim.show{display:block;position:fixed;inset:0;background:var(--ov);z-index:850}
+  .menu{display:inline-flex}
+  .calgrid{gap:6px}
+  .cal-day{min-height:54px;padding:6px}
+  .modal{padding:18px}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
 </style>
 </head>
 <body>
-<header><h1>Mrs Brave's Cake · Admin</h1></header>
-<main>
-  <div class="stats" id="stats"></div>
-  <p id="err" style="color:var(--bad)"></p>
-  <p id="ok" style="color:var(--ok)"></p>
-  <nav>
-    <button class="on" data-tab="orders">Orders</button>
-    <button data-tab="calendar">Calendar</button>
-    <button data-tab="insights">Insights</button>
-    <button data-tab="products">Products</button>
-    <button data-tab="faq">FAQ</button>
-    <button data-tab="delivery">Delivery</button>
-    <button data-tab="inbox" id="inboxTab">Questions</button>
-  </nav>
+<div class="scrim" id="scrim"></div>
+<div class="app">
+  <aside class="side" id="side" aria-label="Main menu">
+    <div class="logo">
+      <span class="mark"><i class="ti ti-cake" aria-hidden="true"></i></span>
+      <span>Mrs Brave's Cake<small>Admin</small></span>
+    </div>
+    <button class="item on" data-tab="orders"><i class="ti ti-layout-dashboard" aria-hidden="true"></i>Orders</button>
+    <button class="item" data-tab="calendar"><i class="ti ti-calendar" aria-hidden="true"></i>Calendar</button>
+    <button class="item" data-tab="insights"><i class="ti ti-chart-bar" aria-hidden="true"></i>Insights</button>
+    <button class="item" data-tab="products"><i class="ti ti-cake" aria-hidden="true"></i>Products</button>
+    <button class="item" data-tab="faq"><i class="ti ti-message-circle" aria-hidden="true"></i>FAQ</button>
+    <button class="item" data-tab="delivery"><i class="ti ti-map-pin" aria-hidden="true"></i>Delivery</button>
+    <button class="item" data-tab="inbox" id="inboxTab"><i class="ti ti-help" aria-hidden="true"></i>Questions<span class="bd hidden" id="inboxBadge"></span></button>
+  </aside>
 
-  <section id="orders">
-    <p><label>Show: <select id="filter">
-      <option value="all">All</option><option value="active">In progress (not completed)</option>
-      <option value="pending">Pending</option><option value="confirmed">Confirmed</option>
-      <option value="preparing">Preparing</option><option value="ready">Ready for pick up</option>
-      <option value="out_for_delivery">Out for delivery</option>
-      <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
-    </select></label> <button id="refresh" type="button">Refresh</button></p>
-    <div class="wrap"><table>
-      <thead><tr><th>#</th><th>Date</th><th>Customer</th><th>Items</th><th>Total</th><th>Delivery / Pick up</th><th>Notes and card</th><th>Status</th></tr></thead>
-      <tbody id="orderRows"></tbody>
-    </table></div>
-  </section>
+  <div class="main">
+    <header class="top">
+      <button class="ib menu" id="menuBtn" aria-label="Open menu"><i class="ti ti-menu-2" aria-hidden="true"></i></button>
+      <h1 id="pageTitle">Orders</h1>
+      <button class="ib" id="bellBtn" aria-label="Open questions"><i class="ti ti-bell" aria-hidden="true"></i><span class="pip hidden" id="bellPip"></span></button>
+      <button class="ib" id="themeBtn" aria-label="Switch theme"><i class="ti ti-moon" aria-hidden="true"></i></button>
+    </header>
 
-  <section id="calendar" class="hidden">
-    <div class="card">
-      <h3>Taking orders</h3>
-      <p id="shopState" class="muted"></p>
-      <div class="shoprow">
-        <button type="button" class="shopbtn" id="shopSwitch"></button>
-        <label><input type="checkbox" id="hoursOn"> Use opening hours</label>
-        <label>Opens <input type="time" id="openTime" value="08:00"></label>
-        <label>Closes <input type="time" id="closeTime" value="20:00"></label>
-        <button type="button" class="shopbtn" id="saveHours">Save hours</button>
+    <div class="stats" id="stats"></div>
+
+    <section id="orders">
+      <div class="panel">
+        <div class="toolbar">
+          <select id="filter" class="fld auto" aria-label="Filter orders">
+            <option value="all">All</option><option value="active">In progress</option>
+            <option value="pending">Pending</option><option value="confirmed">Confirmed</option>
+            <option value="preparing">Preparing</option><option value="ready">Ready for pick up</option>
+            <option value="out_for_delivery">Out for delivery</option>
+            <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
+          </select>
+          <div class="grow"><i class="ti ti-search" aria-hidden="true"></i><input id="orderSearch" class="fld" type="search" placeholder="Search orders" aria-label="Search orders"></div>
+          <button class="btn" id="refresh" type="button"><i class="ti ti-refresh" aria-hidden="true"></i>Refresh</button>
+        </div>
+        <div class="wrap">
+          <div class="tr head g-orders"><div>#</div><div>Date</div><div>Customer</div><div>Items</div><div>Total</div><div>Delivery / Pick up</div><div>Status</div><div></div></div>
+          <div id="orderRows"><div class="empty"><i class="ti ti-loader-2 spin" aria-hidden="true"></i>Loading orders</div></div>
+        </div>
       </div>
-      <p class="muted">Times are Philippine time. Outside these hours, or on a locked day, the bot still answers questions and shows the menu but won't start or confirm an order.
-        Change the closing time any time to close early or late, or use the switch to stop orders right now.</p>
-    </div>
-    <div class="card" style="margin-top:12px">
-      <div class="calhead">
-        <button type="button" id="calPrev" aria-label="Previous month">&lsaquo;</button>
-        <b id="calTitle"></b>
-        <button type="button" id="calNext" aria-label="Next month">&rsaquo;</button>
-        <button type="button" id="calToday">Today</button>
+    </section>
+
+    <section id="calendar" class="hidden">
+      <div class="panel">
+        <h2>Taking orders</h2>
+        <p id="shopState"></p>
+        <div class="shoprow">
+          <button type="button" class="btn" id="shopSwitch"></button>
+          <label><input type="checkbox" class="sw" id="hoursOn"> Use opening hours</label>
+          <label>Opens <input class="fld auto" type="time" id="openTime" value="08:00"></label>
+          <label>Closes <input class="fld auto" type="time" id="closeTime" value="20:00"></label>
+          <button type="button" class="btn pri" id="saveHours"><i class="ti ti-check" aria-hidden="true"></i>Save hours</button>
+        </div>
+        <p class="muted" style="margin:14px 0 0">Philippine time. Outside these hours or on a locked day, the bot answers questions but won't take orders.</p>
       </div>
-      <div class="calgrid" id="calGrid"></div>
-      <p class="muted">Click a day to see its orders and to lock it. <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-label="lock" style="vertical-align:-2px"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg> = locked (the shop is closed all day). Order counts are by the day the order was placed; cancelled orders are not counted.</p>
-    </div>
-    <div class="card hidden" id="dayPanel" style="margin-top:12px">
-      <h3 id="dayTitle"></h3>
-      <div class="shoprow">
-        <button type="button" id="lockBtn"></button>
-        <label>Note shown to customers (optional)<br><input id="lockReason" maxlength="60" placeholder="Holiday, family event…" style="width:260px"></label>
+      <div class="panel">
+        <div class="calhead">
+          <button type="button" class="ib" id="calPrev" aria-label="Previous month"><i class="ti ti-chevron-left" aria-hidden="true"></i></button>
+          <b id="calTitle"></b>
+          <button type="button" class="ib" id="calNext" aria-label="Next month"><i class="ti ti-chevron-right" aria-hidden="true"></i></button>
+          <button type="button" class="btn sm" id="calToday">Today</button>
+        </div>
+        <div class="calgrid" id="calGrid"></div>
+        <p class="muted" style="margin:14px 0 0"><i class="ti ti-lock" aria-hidden="true"></i> Locked day: the shop is closed all day. Counts are by the day the order was placed, without cancelled orders.</p>
       </div>
-      <div class="wrap" style="margin-top:12px"><table>
-        <thead><tr><th>#</th><th>Time</th><th>Customer</th><th>Items</th><th>Total</th><th>Status</th></tr></thead>
-        <tbody id="dayRows"></tbody>
-      </table></div>
-    </div>
-  </section>
-
-  <section id="insights" class="hidden">
-    <div class="card">
-      <h3>Missed orders (last 30 days)</h3>
-      <p class="muted">Customers who tried to order while the shop was closed: a locked day, outside opening hours, or the master switch. Counted once per customer per 30 minutes.</p>
-      <p id="missedTotal"></p>
-      <div class="wrap"><table>
-        <thead><tr><th>Day</th><th>Attempts</th><th>Why</th></tr></thead>
-        <tbody id="missedRows"></tbody>
-      </table></div>
-    </div>
-    <div class="card" style="margin-top:12px">
-      <h3>Questions the bot couldn't answer</h3>
-      <p class="muted">The most repeated ones in the last 30 days. For the common ones, write an answer in the FAQ tab.</p>
-      <div class="wrap"><table>
-        <thead><tr><th>Times</th><th>Message</th></tr></thead>
-        <tbody id="unansweredRows"></tbody>
-      </table></div>
-    </div>
-  </section>
-
-  <section id="products" class="hidden">
-    <div class="card">
-      <h3>Add a cake</h3>
-      <div class="cakeform">
-        <label>Cake name<input id="newCakeName" maxlength="80" placeholder="Mango Float"></label>
-        <label>Price (₱)<input id="newCakePrice" type="number" min="0" step="1" placeholder="400"></label>
-        <label>How many available<input id="newCakeStock" type="number" min="0" step="1" placeholder="empty = unlimited"></label>
-        <label>Short description <span class="muted">(optional)</span><input id="newCakeDesc" maxlength="60" placeholder="Graham, mango, cream"></label>
-        <label>Photo <span class="muted">(optional)</span><input id="newCakePhoto" type="file" accept="image/*"></label>
-        <button id="addCakeBtn" type="button">Add cake</button>
+      <div class="panel hidden" id="dayPanel">
+        <h2 id="dayTitle"></h2>
+        <div class="shoprow" style="margin:10px 0 16px">
+          <button type="button" class="ib" id="lockBtn"></button>
+          <label style="flex:1;min-width:220px"><input id="lockReason" class="fld" maxlength="60" placeholder="Note for customers, like Holiday" aria-label="Note shown to customers"></label>
+        </div>
+        <div class="wrap">
+          <div class="tr head g-day"><div>#</div><div>Time</div><div>Customer</div><div>Items</div><div>Total</div><div>Status</div></div>
+          <div id="dayRows"></div>
+        </div>
       </div>
-      <p class="muted">The photo is cropped to the wide shape Messenger shows, so keep the cake in the middle. Customers can order until the number runs out; a cake at 0 shows as sold out.</p>
-    </div>
-    <input id="photoPick" type="file" accept="image/*" class="hidden">
-    <div class="wrap"><table>
-      <thead><tr><th>Photo</th><th>Cake</th><th>Price (₱)</th><th>In stock</th><th>Available</th><th></th></tr></thead>
-      <tbody id="productRows"></tbody>
-    </table></div>
-  </section>
+    </section>
 
-  <section id="faq" class="hidden">
-    <p class="muted">These are the answers the bot gives to questions about the shop. The bot only picks the topic; it sends your answer exactly as you write it. Changes reach the bot within a minute.</p>
-    <div id="faqList" class="faqs"></div>
-    <div class="card faq">
-      <h3>Add a topic</h3>
-      <label>Topic name <span class="muted">(lowercase letters, numbers and underscores, for example gift_wrap)</span>
-        <input id="newTopic" maxlength="40" placeholder="gift_wrap"></label>
-      <label>What customers ask about <span class="muted">(describe the kind of question, for example "whether the shop offers gift wrapping or a gift box". A vague description sends unrelated questions here.)</span>
-        <textarea id="newDesc" rows="2" maxlength="300"></textarea></label>
-      <label>Answer in English <textarea id="newEn" rows="3" maxlength="1000"></textarea></label>
-      <label>Answer in Tagalog <span class="muted">(optional; English is sent if empty)</span>
-        <textarea id="newTl" rows="3" maxlength="1000"></textarea></label>
-      <label>Answer in Hiligaynon <span class="muted">(optional; English is sent if empty)</span>
-        <textarea id="newHil" rows="3" maxlength="1000"></textarea></label>
-      <button type="button" id="addFaqBtn">Add topic</button>
-    </div>
-  </section>
-
-  <section id="delivery" class="hidden">
-    <div class="card">
-      <h3>Add a delivery area</h3>
-      <div class="cakeform">
-        <label>City or municipality<input id="newAreaName" maxlength="20" placeholder="Iloilo City"></label>
-        <label>Delivery fee (₱)<input id="newAreaFee" type="number" min="0" step="1" placeholder="50"></label>
-        <button id="addAreaBtn" type="button">Add area</button>
+    <section id="insights" class="hidden">
+      <div class="panel">
+        <h2>Missed orders</h2>
+        <p class="muted">Customers who tried to order while closed, last 30 days.</p>
+        <p id="missedTotal"></p>
+        <div class="wrap">
+          <div class="tr head g-missed"><div>Day</div><div>Attempts</div><div>Why</div></div>
+          <div id="missedRows"></div>
+        </div>
       </div>
-      <p class="muted">Customers who choose delivery pick their area from these buttons (at most 12 active areas, names up to 20 characters) and the fee is added to their total.
-        <b>Other areas</b> lets a customer type an area that isn't listed; the fee then stays <b>to be confirmed</b> and you set it in the Orders tab before confirming the order.
-        Switch Other areas off to deliver only to the listed areas. With no areas switched on, the bot charges its flat ₱50 fee.</p>
+      <div class="panel">
+        <h2>Questions the bot couldn't answer</h2>
+        <p class="muted">Most repeated in the last 30 days. Add the common ones to the FAQ.</p>
+        <div class="wrap">
+          <div class="tr head g-unans"><div>Times</div><div>Message</div></div>
+          <div id="unansweredRows"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="products" class="hidden">
+      <div class="panel">
+        <div class="toolbar">
+          <div style="margin-right:auto"><h2 style="margin:0;font-size:16px;font-weight:500">Cakes</h2><span class="muted">Photos are cropped to the wide Messenger shape. At 0 stock a cake shows as sold out.</span></div>
+          <button class="btn pri" type="button" onclick="openModal('mCake')"><i class="ti ti-plus" aria-hidden="true"></i>Add cake</button>
+        </div>
+        <input id="photoPick" type="file" accept="image/*" class="hidden">
+        <div class="wrap">
+          <div class="tr head g-prod"><div>Photo</div><div>Cake</div><div>Price</div><div>In stock</div><div>On</div><div></div></div>
+          <div id="productRows"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="faq" class="hidden">
+      <div class="toolbar">
+        <span class="muted" style="margin-right:auto;max-width:560px">The bot picks the topic and sends your answer as written. Changes reach the bot within a minute.</span>
+        <button class="btn pri" type="button" onclick="openModal('mFaq')"><i class="ti ti-plus" aria-hidden="true"></i>Add topic</button>
+      </div>
+      <div id="faqList" class="faqs"></div>
+    </section>
+
+    <section id="delivery" class="hidden">
+      <div class="panel">
+        <div class="toolbar">
+          <div style="margin-right:auto"><h2 style="margin:0;font-size:16px;font-weight:500">Delivery areas</h2><span class="muted">Customers pick from these. Other areas lets them type one, and you set the fee in the order.</span></div>
+          <button class="btn pri" type="button" onclick="openModal('mArea')"><i class="ti ti-plus" aria-hidden="true"></i>Add area</button>
+        </div>
+        <div class="wrap">
+          <div class="tr head g-area"><div>Area</div><div>Fee</div><div>On</div><div></div></div>
+          <div id="areaRows"></div>
+        </div>
+      </div>
+    </section>
+
+    <section id="inbox" class="hidden">
+      <div class="panel">
+        <div class="toolbar">
+          <span class="muted" style="margin-right:auto;max-width:560px">Reply to customers in the Facebook Page inbox. The bot stays quiet for them until you press Done.</span>
+          <select id="inboxFilter" class="fld auto" aria-label="Filter questions"><option value="open">Open</option><option value="all">All</option></select>
+          <button class="btn" id="inboxRefresh" type="button"><i class="ti ti-refresh" aria-hidden="true"></i>Refresh</button>
+        </div>
+        <div class="wrap">
+          <div class="tr head g-inbox"><div>Type</div><div>When</div><div>Customer</div><div>Message</div><div></div></div>
+          <div id="inboxRows"></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<div class="mo" id="mOrder" role="dialog" aria-modal="true" aria-labelledby="mOrderTitle">
+  <div class="modal wide">
+    <div class="mhead"><h2 id="mOrderTitle">Order</h2><button class="ib sm" type="button" aria-label="Close" onclick="closeModal()"><i class="ti ti-x" aria-hidden="true"></i></button></div>
+    <div id="mOrderBody"></div>
+    <div class="mfoot"><button class="btn" type="button" onclick="closeModal()">Close</button></div>
+  </div>
+</div>
+
+<div class="mo" id="mCake" role="dialog" aria-modal="true" aria-labelledby="mCakeTitle">
+  <div class="modal">
+    <div class="mhead"><h2 id="mCakeTitle">Add a cake</h2><button class="ib sm" type="button" aria-label="Close" onclick="closeModal()"><i class="ti ti-x" aria-hidden="true"></i></button></div>
+    <label class="f">Cake name<input class="fld" id="newCakeName" maxlength="80" placeholder="Mango Float"></label>
+    <div class="grid2">
+      <label class="f">Price (₱)<input class="fld" id="newCakePrice" type="number" min="0" step="1" placeholder="400"></label>
+      <label class="f">How many available<input class="fld" id="newCakeStock" type="number" min="0" step="1" placeholder="Empty is unlimited"></label>
     </div>
-    <div class="wrap"><table>
-      <thead><tr><th>Area</th><th>Delivery fee (₱)</th><th>Active</th><th></th></tr></thead>
-      <tbody id="areaRows"></tbody>
-    </table></div>
-  </section>
+    <label class="f">Short description (optional)<input class="fld" id="newCakeDesc" maxlength="60" placeholder="Graham, mango, cream"></label>
+    <label class="f">Photo (optional)<input class="fld" id="newCakePhoto" type="file" accept="image/*"></label>
+    <div class="mfoot"><button class="btn" type="button" onclick="closeModal()">Cancel</button><button class="btn pri" id="addCakeBtn" type="button"><i class="ti ti-plus" aria-hidden="true"></i>Add cake</button></div>
+  </div>
+</div>
 
-  <section id="inbox" class="hidden">
-    <p class="muted"><b>Wants the owner</b> means a customer asked to talk to you. Reply to them in the Facebook Page inbox (Meta Business Suite); the bot stays quiet for that customer until you press <b>Done</b> (or after 12 hours). <b>Unanswered</b> are questions the bot could not answer: you can turn one into an FAQ topic.</p>
-    <p><label>Show: <select id="inboxFilter"><option value="open">Open</option><option value="all">All</option></select></label>
-      <button id="inboxRefresh" type="button">Refresh</button></p>
-    <div class="wrap"><table>
-      <thead><tr><th>Type</th><th>When</th><th>Customer</th><th>Message</th><th></th></tr></thead>
-      <tbody id="inboxRows"></tbody>
-    </table></div>
-  </section>
-</main>
+<div class="mo" id="mFaq" role="dialog" aria-modal="true" aria-labelledby="mFaqTitle">
+  <div class="modal wide">
+    <div class="mhead"><h2 id="mFaqTitle">Add a topic</h2><button class="ib sm" type="button" aria-label="Close" onclick="closeModal()"><i class="ti ti-x" aria-hidden="true"></i></button></div>
+    <label class="f">Topic name (lowercase, numbers, underscores)<input class="fld" id="newTopic" maxlength="40" placeholder="gift_wrap"></label>
+    <label class="f">What customers ask about<textarea class="fld" id="newDesc" rows="2" maxlength="300" placeholder="Whether the shop offers gift wrapping or a gift box"></textarea></label>
+    <label class="f">Answer in English<textarea class="fld" id="newEn" rows="3" maxlength="1000"></textarea></label>
+    <label class="f">Answer in Tagalog (optional)<textarea class="fld" id="newTl" rows="3" maxlength="1000"></textarea></label>
+    <label class="f">Answer in Hiligaynon (optional)<textarea class="fld" id="newHil" rows="3" maxlength="1000"></textarea></label>
+    <div class="mfoot"><button class="btn" type="button" onclick="closeModal()">Cancel</button><button class="btn pri" type="button" id="addFaqBtn"><i class="ti ti-plus" aria-hidden="true"></i>Add topic</button></div>
+  </div>
+</div>
 
+<div class="mo" id="mArea" role="dialog" aria-modal="true" aria-labelledby="mAreaTitle">
+  <div class="modal">
+    <div class="mhead"><h2 id="mAreaTitle">Add a delivery area</h2><button class="ib sm" type="button" aria-label="Close" onclick="closeModal()"><i class="ti ti-x" aria-hidden="true"></i></button></div>
+    <label class="f">City or municipality<input class="fld" id="newAreaName" maxlength="20" placeholder="Iloilo City"></label>
+    <label class="f">Delivery fee (₱)<input class="fld" id="newAreaFee" type="number" min="0" step="1" placeholder="50"></label>
+    <div class="mfoot"><button class="btn" type="button" onclick="closeModal()">Cancel</button><button class="btn pri" id="addAreaBtn" type="button"><i class="ti ti-plus" aria-hidden="true"></i>Add area</button></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/sweetalert2@11.14.5/dist/sweetalert2.all.min.js"></script>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));  // customer text is untrusted
 const peso = n => "₱" + Number(n).toLocaleString("en-PH", {minimumFractionDigits:2});
+const I = n => `<i class="ti ti-${n}" aria-hidden="true"></i>`;
+const empty = (icon, text) => `<div class="empty">${I(icon)}${text}</div>`;
 
 let orders = [], products = [], faqs = [], inbox = [];
+
+// ---------- Theme ----------
+function applyTheme(t) {
+  document.documentElement.dataset.theme = t;
+  $("themeBtn").innerHTML = I(t === "dark" ? "sun" : "moon");
+  $("themeBtn").setAttribute("aria-label", t === "dark" ? "Switch to light mode" : "Switch to dark mode");
+}
+applyTheme(document.documentElement.dataset.theme);
+$("themeBtn").onclick = () => {
+  const t = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+  applyTheme(t);
+  try { localStorage.setItem("theme", t); } catch (_) {}
+};
+
+// ---------- Alerts (SweetAlert2) ----------
+const Toast = Swal.mixin({toast: true, position: "top-end", showConfirmButton: false, timer: 2600, heightAuto: false});
+function showOk(text) { if (text) Toast.fire({icon: "success", iconHtml: I("circle-check"), title: text}); }
+function showError(e) { if (e) Toast.fire({icon: "error", iconHtml: I("circle-x"), title: e.message || String(e), timer: 5000}); }
+async function confirmBox({title, text, confirmText = "Confirm", cancelText = "Cancel", danger = false, icon = "question-mark"}) {
+  const r = await Swal.fire({
+    icon: danger ? "warning" : "question", iconHtml: I(danger ? "alert-triangle" : icon),
+    title, text, showCancelButton: true, confirmButtonText: confirmText, cancelButtonText: cancelText,
+    reverseButtons: true, focusCancel: danger, buttonsStyling: false, heightAuto: false,
+    customClass: {confirmButton: "btn " + (danger ? "dg" : "pri"), cancelButton: "btn"}
+  });
+  return r.isConfirmed;
+}
+
+// ---------- Modals ----------
+function openModal(id) {
+  closeModal();
+  $(id).classList.add("show");
+  const first = $(id).querySelector("input:not([type=file]),textarea,select");
+  if (first && id !== "mOrder") setTimeout(() => first.focus(), 30);
+}
+function closeModal() { document.querySelectorAll(".mo.show").forEach(m => m.classList.remove("show")); }
+document.querySelectorAll(".mo").forEach(m => m.addEventListener("mousedown", e => { if (e.target === m) closeModal(); }));
+document.addEventListener("keydown", e => { if (e.key === "Escape" && !document.querySelector(".swal2-container")) { closeModal(); closeSide(); } });
+
+// ---------- Sidebar and tabs ----------
+const TABS = ["orders", "calendar", "insights", "products", "faq", "delivery", "inbox"];
+const TITLES = {orders: "Orders", calendar: "Calendar", insights: "Insights", products: "Products", faq: "FAQ", delivery: "Delivery areas", inbox: "Questions"};
+function closeSide() { $("side").classList.remove("open"); $("scrim").classList.remove("show"); }
+function activate(tab) {
+  document.querySelectorAll(".side [data-tab]").forEach(x => x.classList.toggle("on", x.dataset.tab === tab));
+  TABS.forEach(t => $(t).classList.toggle("hidden", t !== tab));
+  $("pageTitle").textContent = TITLES[tab];
+  closeSide();
+  if (tab === "calendar") loadCalendar();
+  if (tab === "insights") loadInsights();
+}
+document.querySelectorAll(".side [data-tab]").forEach(b => b.onclick = () => activate(b.dataset.tab));
+$("menuBtn").onclick = () => { $("side").classList.add("open"); $("scrim").classList.add("show"); };
+$("scrim").onclick = closeSide;
+$("bellBtn").onclick = () => activate("inbox");
 
 async function api(path, options = {}) {
   const res = await fetch("/admin/api/" + path, {headers: {"Content-Type": "application/json"}, ...options});
@@ -240,8 +478,6 @@ async function api(path, options = {}) {
   }
   return res.json();
 }
-function showError(e) { $("err").textContent = e ? e.message : ""; }
-function showOk(text) { $("ok").textContent = text; setTimeout(() => { $("ok").textContent = ""; }, 3000); }
 
 async function load() {
   try { [orders, products] = await Promise.all([api("orders"), api("products")]); }
@@ -262,50 +498,84 @@ function statusChoices(o) {
 function renderStats() {
   const count = s => orders.filter(o => o.status === s).length;
   const active = orders.filter(o => IN_PROGRESS.includes(o.status)).length;
-  $("stats").innerHTML = [["Pending", count("pending")], ["In progress", active], ["Completed", count("completed")], ["Cancelled", count("cancelled")],
-    ["Sales (completed)", peso(orders.filter(o => o.status === "completed").reduce((t, o) => t + o.total, 0))]]
-    .map(([l, v]) => `<div class="card"><b>${v}</b><span>${l}</span></div>`).join("");
+  $("stats").innerHTML = [["Pending", count("pending"), "clock"], ["In progress", active, "list-details"], ["Completed", count("completed"), "check"], ["Cancelled", count("cancelled"), "x"],
+    ["Sales (completed)", peso(orders.filter(o => o.status === "completed").reduce((t, o) => t + o.total, 0)), "currency-peso"]]
+    .map(([l, v, ic]) => `<div class="stat"><span class="ic">${I(ic)}</span><div><b>${v}</b><span>${l}</span></div></div>`).join("");
 }
 
 function renderOrders() {
-  const f = $("filter").value;
-  const shown = o => f === "all" || (f === "active" ? IN_PROGRESS.includes(o.status) : o.status === f);
+  const f = $("filter").value, q = $("orderSearch").value.trim().toLowerCase();
+  const shown = o => (f === "all" || (f === "active" ? IN_PROGRESS.includes(o.status) : o.status === f)) &&
+    (!q || [o.id, o.name, o.phone, o.items].join(" ").toLowerCase().includes(q));
   $("orderRows").innerHTML = orders.filter(shown).map(o => `
-    <tr>
-      <td>${o.id}</td><td>${esc(o.date)}</td>
-      <td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td>
-      <td>${esc(o.items)}</td><td>${peso(o.total)}</td>
-      <td><span class="tag">${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span>${o.delivery_area ? ` <b>${esc(o.delivery_area)}</b>` : ""}
-        <br><span class="muted">${esc(o.where)}</span>
-        ${o.delivery_fee !== null && o.fulfillment !== "pickup" ? `<br>Delivery fee: ${peso(o.delivery_fee)}` : ""}
-        ${o.fee_pending ? `<br><span class="wants">Fee to confirm</span><br>
-          <input type="number" id="fee-${o.id}" min="0" step="1" placeholder="₱" style="width:80px">
-          <button type="button" class="photo-btn" onclick="setOrderFee(${o.id})">Set fee</button>` : ""}</td>
-      <td>${esc(o.notes) || '<span class="muted">–</span>'}${o.dedication ? `<br><b>Card:</b> ${esc(o.dedication)}` : ""}</td>
-      <td><select onchange="setStatus(${o.id}, this.value)">
+    <div class="tr g-orders">
+      <div class="muted">${o.id}</div>
+      <div>${esc(o.date.slice(0, 10))}<small>${esc(o.date.slice(11))}</small></div>
+      <div>${esc(o.name)}<small>${esc(o.phone)}</small></div>
+      <div>${esc(o.items)}</div>
+      <div>${peso(o.total)}</div>
+      <div><span class="tag">${I(o.fulfillment === "pickup" ? "shopping-bag" : "truck")}${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</span>
+        ${o.delivery_area ? `<small>${esc(o.delivery_area)}</small>` : ""}
+        ${o.fee_pending ? '<small class="wants">Fee to confirm</small>' : ""}</div>
+      <div><select class="fld stat-sel s-${esc(o.status)}" aria-label="Status of order ${o.id}" onchange="askStatus(${o.id}, this)">
         ${statusChoices(o).map(s => `<option value="${s}" ${o.status === s ? "selected" : ""}>${STATUS_LABELS[s] || esc(s)}</option>`).join("")}
-      </select></td>
-    </tr>`).join("") || '<tr><td colspan="8" class="muted">No orders.</td></tr>';
+      </select></div>
+      <div class="rowact"><button type="button" class="ib sm" aria-label="View order ${o.id}" onclick="openOrder(${o.id})">${I("eye")}${o.notes || o.dedication ? '<span class="mark-dot"></span>' : ""}</button></div>
+    </div>`).join("") || empty("receipt", "No orders.");
+}
+
+function openOrder(id) {
+  const o = orders.find(x => x.id === id);
+  if (!o) return;
+  $("mOrderTitle").textContent = "Order #" + o.id;
+  const feeLine = o.fulfillment === "pickup" ? "" :
+    o.fee_pending ? `<dt>Delivery fee</dt><dd><div class="feebox"><input class="fld" type="number" id="fee-${o.id}" min="0" step="1" placeholder="₱ fee" aria-label="Delivery fee"><button type="button" class="btn sm pri" onclick="setOrderFee(${o.id})">Set fee</button></div></dd>`
+    : o.delivery_fee !== null ? `<dt>Delivery fee</dt><dd>${peso(o.delivery_fee)}</dd>` : "";
+  $("mOrderBody").innerHTML = `<dl class="kv">
+    <dt>Customer</dt><dd>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></dd>
+    <dt>Placed</dt><dd>${esc(o.date)}</dd>
+    <dt>Items</dt><dd>${esc(o.items)}</dd>
+    <dt>Total</dt><dd>${peso(o.total)}</dd>
+    <dt>${o.fulfillment === "pickup" ? "Pick up" : "Delivery"}</dt><dd>${o.delivery_area ? "<b>" + esc(o.delivery_area) + "</b><br>" : ""}${esc(o.where) || '<span class="muted">–</span>'}</dd>
+    ${feeLine}
+    <dt>Notes</dt><dd>${esc(o.notes) || '<span class="muted">–</span>'}</dd>
+    <dt>Card message</dt><dd>${esc(o.dedication) || '<span class="muted">–</span>'}</dd>
+    <dt>Status</dt><dd><span class="s-${esc(o.status)}">${STATUS_LABELS[o.status] || esc(o.status)}</span></dd>
+  </dl>`;
+  openModal("mOrder");
+}
+
+async function askStatus(id, el) {
+  const o = orders.find(x => x.id === id), to = el.value;
+  if (!o || to === o.status) return;
+  const heavy = to === "cancelled" || to === "completed";
+  const ok = await confirmBox({
+    title: "Change order #" + id + "?",
+    text: (STATUS_LABELS[o.status] || o.status) + " to " + (STATUS_LABELS[to] || to) + "." + (heavy ? " This is hard to undo." : ""),
+    confirmText: "Change status", danger: to === "cancelled", icon: "arrows-exchange"
+  });
+  if (!ok) { el.value = o.status; return; }
+  await save("orders/" + id, {status: to});
+  showOk("Order #" + id + ": " + (STATUS_LABELS[to] || to));
 }
 
 function renderProducts() {
   $("productRows").innerHTML = products.map(p => `
-    <tr>
-      <td>${p.image_url ? `<img class="thumb" src="${esc(p.image_url)}" alt="">` : '<div class="thumb none">no photo</div>'}</td>
-      <td>${esc(p.name)}${p.stock === 0 ? '<br><span class="soldout">sold out</span>' : ""}
-        ${p.description ? `<br><span class="muted">${esc(p.description)}</span>` : ""}</td>
-      <td><input type="number" value="${p.price}" min="0" step="1" style="width:90px" onchange="setPrice(${p.id}, this.value)"></td>
-      <td><input type="number" value="${p.stock === null ? "" : p.stock}" min="0" step="1" placeholder="unlimited" style="width:100px" onchange="setStock(${p.id}, this.value)"></td>
-      <td><input type="checkbox" ${p.is_available ? "checked" : ""} onchange="setAvail(${p.id}, this.checked)"></td>
-      <td><button type="button" class="photo-btn" onclick="changePhoto(${p.id})">${p.image_url ? "Change photo" : "Add photo"}</button>
-        ${p.image_url ? `<button type="button" class="photo-btn" onclick="removePhoto(${p.id})">Remove photo</button>` : ""}</td>
-    </tr>`).join("");
+    <div class="tr g-prod">
+      <div>${p.image_url ? `<img class="thumb" src="${esc(p.image_url)}" alt="">` : `<div class="thumb none">${I("photo")}</div>`}</div>
+      <div>${esc(p.name)}${p.stock === 0 ? '<br><span class="soldout">Sold out</span>' : ""}
+        ${p.description ? `<small>${esc(p.description)}</small>` : ""}</div>
+      <div><input class="fld" type="number" value="${p.price}" min="0" step="1" aria-label="Price of ${esc(p.name)}" onchange="setPrice(${p.id}, this.value)"></div>
+      <div><input class="fld" type="number" value="${p.stock === null ? "" : p.stock}" min="0" step="1" placeholder="Unlimited" aria-label="Stock of ${esc(p.name)}" onchange="setStock(${p.id}, this.value)"></div>
+      <div><input type="checkbox" class="sw" ${p.is_available ? "checked" : ""} aria-label="${esc(p.name)} available" onchange="setAvail(${p.id}, this.checked)"></div>
+      <div class="rowact"><button type="button" class="ib sm" aria-label="${p.image_url ? "Change photo" : "Add photo"}" title="${p.image_url ? "Change photo" : "Add photo"}" onclick="changePhoto(${p.id})">${I("photo-up")}</button>
+        ${p.image_url ? `<button type="button" class="ib sm dg" aria-label="Remove photo" title="Remove photo" onclick="removePhoto(${p.id})">${I("photo-off")}</button>` : ""}</div>
+    </div>`).join("") || empty("cake", "No cakes yet.");
 }
 
 // Orders and products: every change is saved on the server first, then the page reloads its data
 // from the server, so the screen never shows a change that did not actually save.
 async function save(path, body) {
-  showError(null);
   let problem = null;
   try { await api(path, {method: "PATCH", body: JSON.stringify(body)}); }
   catch (e) { problem = e; }
@@ -317,7 +587,7 @@ function setAvail(id, on) { return save("products/" + id, {is_available: on}); }
 async function setPrice(id, value) {
   const price = Number(value);
   if (value === "" || !Number.isFinite(price) || price < 0) {
-    showError(null); await load(); showError(new Error("Enter a valid price."));
+    await load(); showError(new Error("Enter a valid price."));
     return;
   }
   return save("products/" + id, {price});
@@ -325,7 +595,7 @@ async function setPrice(id, value) {
 async function setStock(id, value) {  // an empty box means unlimited
   const stock = value.trim() === "" ? null : Number(value);
   if (stock !== null && (!Number.isInteger(stock) || stock < 0)) {
-    showError(null); await load(); showError(new Error("Enter a whole number, or leave it empty for unlimited."));
+    await load(); showError(new Error("Enter a whole number, or leave it empty for unlimited."));
     return;
   }
   return save("products/" + id, {stock});
@@ -360,14 +630,17 @@ function changePhoto(id) { photoFor = id; $("photoPick").value = ""; $("photoPic
 $("photoPick").onchange = async () => {
   const file = $("photoPick").files[0];
   if (!file || photoFor === null) return;
-  showError(null);
-  try { await save("products/" + photoFor, {image_data: await photoToJpeg(file)}); }
+  try { await save("products/" + photoFor, {image_data: await photoToJpeg(file)}); showOk("Photo saved"); }
   catch (e) { showError(e); }
 };
-function removePhoto(id) { return save("products/" + id, {remove_image: true}); }
+async function removePhoto(id) {
+  const ok = await confirmBox({title: "Remove this photo?", text: "The cake stays on the menu without a photo.", confirmText: "Remove photo", danger: true});
+  if (!ok) return;
+  await save("products/" + id, {remove_image: true});
+  showOk("Photo removed");
+}
 
 async function addCake() {
-  showError(null);
   const name = $("newCakeName").value.trim(), price = Number($("newCakePrice").value);
   const stockText = $("newCakeStock").value.trim(), file = $("newCakePhoto").files[0];
   if (!name) return showError(new Error("Enter the cake name."));
@@ -380,7 +653,8 @@ async function addCake() {
     if (file) body.image_data = await photoToJpeg(file);
     await api("products", {method: "POST", body: JSON.stringify(body)});
     ["newCakeName", "newCakePrice", "newCakeStock", "newCakeDesc", "newCakePhoto"].forEach(id => { $(id).value = ""; });
-    showOk("Cake added.");
+    closeModal();
+    showOk("Cake added");
     await load();
   } catch (e) { showError(e); }
   finally { $("addCakeBtn").disabled = false; }
@@ -394,28 +668,29 @@ async function loadFaqs() {
 }
 
 function faqCard(f) {
-  return `<div class="card faq" data-topic="${esc(f.topic)}">
+  return `<div class="panel faq" data-topic="${esc(f.topic)}">
     <h3>${esc(f.topic)}</h3>
-    <label>What customers ask about <span class="muted">(tells the bot which questions belong here)</span>
-      <textarea class="f-desc" rows="2" maxlength="300">${esc(f.description)}</textarea></label>
-    <label>Answer in English
-      <textarea class="f-en" rows="3" maxlength="1000">${esc(f.answer_en)}</textarea></label>
-    <label>Answer in Tagalog <span class="muted">(optional; English is sent if empty)</span>
-      <textarea class="f-tl" rows="3" maxlength="1000">${esc(f.answer_tl || "")}</textarea></label>
-    <label>Answer in Hiligaynon <span class="muted">(optional; English is sent if empty)</span>
-      <textarea class="f-hil" rows="3" maxlength="1000">${esc(f.answer_hil || "")}</textarea></label>
-    <button type="button" onclick="saveFaq(this)">Save</button>
-    <button type="button" class="danger" onclick="deleteFaq(this)">Delete</button>
+    <label class="f">What customers ask about
+      <textarea class="fld f-desc" rows="2" maxlength="300">${esc(f.description)}</textarea></label>
+    <label class="f">Answer in English
+      <textarea class="fld f-en" rows="3" maxlength="1000">${esc(f.answer_en)}</textarea></label>
+    <label class="f">Answer in Tagalog (optional, English is sent if empty)
+      <textarea class="fld f-tl" rows="3" maxlength="1000">${esc(f.answer_tl || "")}</textarea></label>
+    <label class="f">Answer in Hiligaynon (optional, English is sent if empty)
+      <textarea class="fld f-hil" rows="3" maxlength="1000">${esc(f.answer_hil || "")}</textarea></label>
+    <div class="btns">
+      <button type="button" class="btn pri" onclick="saveFaq(this)">${I("device-floppy")}Save</button>
+      <button type="button" class="btn dg" onclick="deleteFaq(this)">${I("trash")}Delete</button>
+    </div>
   </div>`;
 }
 
 function renderFaqs() {
   $("faqList").innerHTML = faqs.length ? faqs.map(faqCard).join("")
-    : '<div class="card faq">No saved topics yet, so the bot is using its built-in answers. <button type="button" onclick="loadDefaults()">Load the built-in answers to edit them</button></div>';
+    : `<div class="panel">${empty("message-circle", "No saved topics yet. The bot is using its built-in answers.")}<div style="text-align:center"><button type="button" class="btn" onclick="loadDefaults()">${I("download")}Load built-in answers to edit</button></div></div>`;
 }
 
 async function putFaq(topic, body) {
-  showError(null);
   try { await api("faqs/" + encodeURIComponent(topic), {method: "PUT", body: JSON.stringify(body)}); }
   catch (e) { showError(e); return false; }
   await loadFaqs();
@@ -430,8 +705,8 @@ function saveFaq(btn) {
 
 async function deleteFaq(btn) {
   const topic = btn.closest(".faq").dataset.topic;
-  if (!confirm("Delete the topic \"" + topic + "\"? The bot will stop answering these questions.")) return;
-  showError(null);
+  const ok = await confirmBox({title: "Delete \"" + topic + "\"?", text: "The bot will stop answering these questions.", confirmText: "Delete topic", danger: true});
+  if (!ok) return;
   try { await api("faqs/" + encodeURIComponent(topic), {method: "DELETE"}); }
   catch (e) { showError(e); return; }
   await loadFaqs();
@@ -440,13 +715,12 @@ async function deleteFaq(btn) {
 
 async function addFaq() {
   const topic = $("newTopic").value.trim().toLowerCase();
-  if (faqs.some(f => f.topic === topic)) { showError(new Error("A topic named \"" + topic + "\" already exists. Edit it above")); return; }
+  if (faqs.some(f => f.topic === topic)) { showError(new Error("A topic named \"" + topic + "\" already exists. Edit it in the list.")); return; }
   const added = await putFaq(topic, {description: $("newDesc").value, answer_en: $("newEn").value, answer_tl: $("newTl").value, answer_hil: $("newHil").value});
-  if (added) ["newTopic", "newDesc", "newEn", "newTl", "newHil"].forEach(id => { $(id).value = ""; });
+  if (added) { ["newTopic", "newDesc", "newEn", "newTl", "newHil"].forEach(id => { $(id).value = ""; }); closeModal(); }
 }
 
 async function loadDefaults() {
-  showError(null);
   try { await api("faqs-load-defaults", {method: "POST"}); }
   catch (e) { showError(e); return; }
   await loadFaqs();
@@ -463,36 +737,38 @@ async function loadInbox() {
 function renderInbox() {
   const open = inbox.filter(i => i.status === "open");
   const waiting = open.filter(i => i.kind === "handoff").length;
-  $("inboxTab").textContent = open.length ? "Questions (" + open.length + ")" : "Questions";
+  $("inboxBadge").textContent = open.length;
+  $("inboxBadge").classList.toggle("hidden", !open.length);
   $("inboxTab").classList.toggle("alert", waiting > 0);
+  $("bellPip").classList.toggle("hidden", !waiting);
   document.title = (waiting ? "(" + waiting + ") " : "") + "Mrs Brave's Cake – Admin";
   const rows = $("inboxFilter").value === "open" ? open : inbox;
   $("inboxRows").innerHTML = rows.map(i => `
-    <tr>
-      <td>${i.kind === "handoff" ? '<span class="wants">Wants the owner</span>' : "Unanswered"}${i.status === "resolved" ? '<br><span class="muted">done</span>' : ""}</td>
-      <td>${esc(i.when)}</td>
-      <td>${esc(i.customer) || '<span class="muted">–</span>'}</td>
-      <td>${esc(i.message)}</td>
-      <td class="inbox-actions">${i.status === "open" ? (i.kind === "handoff"
-        ? `<button type="button" onclick="resolveInbox(${i.id})">Done, bot can answer again</button>`
-        : `<button type="button" onclick="makeFaq(${i.id})">Make FAQ</button><button type="button" onclick="resolveInbox(${i.id})">Dismiss</button>`) : ""}</td>
-    </tr>`).join("") || '<tr><td colspan="5" class="muted">Nothing here.</td></tr>';
+    <div class="tr g-inbox">
+      <div>${i.kind === "handoff" ? '<span class="wants">Wants the owner</span>' : "Unanswered"}${i.status === "resolved" ? '<small>Done</small>' : ""}</div>
+      <div>${esc(i.when)}</div>
+      <div>${esc(i.customer) || '<span class="muted">–</span>'}</div>
+      <div>${esc(i.message)}</div>
+      <div class="rowact">${i.status === "open" ? (i.kind === "handoff"
+        ? `<button type="button" class="btn sm" onclick="resolveInbox(${i.id})">${I("check")}Done</button>`
+        : `<button type="button" class="btn sm" onclick="makeFaq(${i.id})">${I("message-circle-plus")}Make FAQ</button><button type="button" class="btn sm" onclick="resolveInbox(${i.id})">Dismiss</button>`) : ""}</div>
+    </div>`).join("") || empty("inbox", "Nothing here.");
 }
 
 async function resolveInbox(id) {
-  showError(null);
   try { await api("inbox/" + id, {method: "PATCH"}); }
   catch (e) { showError(e); return; }
   await loadInbox();
 }
 
-function makeFaq(id) {  // jump to the FAQ tab with the question filled in; the owner finishes and saves it there
+function makeFaq(id) {  // open the add topic form with the question filled in; the owner finishes and saves it there
   const item = inbox.find(i => i.id === id);
   if (!item) return;
-  document.querySelector('nav button[data-tab="faq"]').click();
+  activate("faq");
+  openModal("mFaq");
   $("newDesc").value = "Questions like: " + item.message;
   $("newTopic").focus();
-  showOk("Fill in a topic name and the answer, then press Add topic. Dismiss the question afterwards.");
+  showOk("Add a topic name and the answer. Dismiss the question afterwards.");
 }
 
 // Delivery areas and the fee of an order whose area is not on the list.
@@ -505,17 +781,16 @@ async function loadAreas() {
 
 function renderAreas() {
   $("areaRows").innerHTML = areas.map(a => `
-    <tr>
-      <td>${esc(a.name)}${a.is_other ? '<br><span class="muted">a customer types an area that is not listed</span>' : ""}</td>
-      <td>${a.is_other ? '<span class="muted">you confirm the fee for each order</span>'
-        : `<input type="number" value="${a.fee}" min="0" step="1" style="width:90px" onchange="setAreaFee(${a.id}, this.value)">`}</td>
-      <td><input type="checkbox" ${a.is_active ? "checked" : ""} onchange="setAreaActive(${a.id}, this.checked)"></td>
-      <td>${a.is_other ? "" : `<button type="button" class="photo-btn" onclick="deleteArea(${a.id}, ${JSON.stringify(a.name).replace(/"/g, "&quot;")})">Delete</button>`}</td>
-    </tr>`).join("") || '<tr><td colspan="4" class="muted">No areas yet.</td></tr>';
+    <div class="tr g-area">
+      <div>${esc(a.name)}${a.is_other ? '<small>A customer types an area that is not listed</small>' : ""}</div>
+      <div>${a.is_other ? '<span class="muted">You confirm each order</span>'
+        : `<input class="fld" type="number" value="${a.fee}" min="0" step="1" aria-label="Fee for ${esc(a.name)}" onchange="setAreaFee(${a.id}, this.value)">`}</div>
+      <div><input type="checkbox" class="sw" ${a.is_active ? "checked" : ""} aria-label="${esc(a.name)} active" onchange="setAreaActive(${a.id}, this.checked)"></div>
+      <div class="rowact">${a.is_other ? "" : `<button type="button" class="ib sm dg" aria-label="Delete ${esc(a.name)}" onclick="deleteArea(${a.id}, ${JSON.stringify(a.name).replace(/"/g, "&quot;")})">${I("trash")}</button>`}</div>
+    </div>`).join("") || empty("map-pin", "No areas yet.");
 }
 
 async function saveArea(id, body) {
-  showError(null);
   try { await api("areas/" + id, {method: "PATCH", body: JSON.stringify(body)}); }
   catch (e) { showError(e); }
   await loadAreas();
@@ -527,31 +802,31 @@ function setAreaFee(id, value) {
 }
 function setAreaActive(id, active) { return saveArea(id, {is_active: active}); }
 async function deleteArea(id, name) {
-  if (!confirm("Delete " + name + "? Old orders keep their saved area.")) return;
-  showError(null);
-  try { await api("areas/" + id, {method: "DELETE"}); }
+  const ok = await confirmBox({title: "Delete " + name + "?", text: "Old orders keep their saved area.", confirmText: "Delete area", danger: true});
+  if (!ok) return;
+  try { await api("areas/" + id, {method: "DELETE"}); showOk("Deleted: " + name); }
   catch (e) { showError(e); }
   await loadAreas();
 }
 async function addArea() {
-  showError(null);
   const name = $("newAreaName").value.trim(), fee = Number($("newAreaFee").value);
   if (!name) return showError(new Error("Enter the city or municipality."));
   if ($("newAreaFee").value === "" || !Number.isFinite(fee) || fee < 0) return showError(new Error("Enter a valid delivery fee."));
   try {
     await api("areas", {method: "POST", body: JSON.stringify({name, fee})});
     $("newAreaName").value = ""; $("newAreaFee").value = "";
-    showOk("Area added.");
+    closeModal();
+    showOk("Area added");
   } catch (e) { showError(e); }
   await loadAreas();
 }
 
 async function setOrderFee(id) {
-  showError(null);
   const box = $("fee-" + id), fee = Number(box.value);
   if (box.value === "" || !Number.isFinite(fee) || fee < 0) return showError(new Error("Enter the delivery fee."));
   try { await api("orders/" + id + "/fee", {method: "PATCH", body: JSON.stringify({fee})}); }
   catch (e) { showError(e); return; }
+  closeModal();
   showOk("Fee saved. The order total now includes it.");
   await load();
 }
@@ -559,8 +834,8 @@ async function setOrderFee(id) {
 // ---------- Calendar: shop hours, locked days, orders per day ----------
 let calMonth = null, calData = {days: {}}, calSelected = null, shop = null, dayInfo = null;
 const todayPH = () => new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);  // Manila date, whatever the browser's timezone
-const LOCK_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>';
-const UNLOCK_SVG = '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 7.5-2"/></svg>';
+const LOCK_ICON = I("lock");
+const UNLOCK_ICON = I("lock-open");
 const CLOSED_WHY = {switch: "the master switch is off", day: "today is locked", hours: "it is outside opening hours"};
 
 async function loadCalendar() {
@@ -572,8 +847,8 @@ async function loadCalendar() {
 }
 
 function renderShop() {
-  $("shopState").innerHTML = `<span class="dot ${shop.accepting_orders ? "" : "off"}"></span>` + (shop.accepting_orders ? "The bot is taking orders" : "The bot is NOT taking orders (" + (CLOSED_WHY[shop.closed_because] || "closed") + ")") + " · Manila time " + shop.now;
-  $("shopSwitch").textContent = shop.is_open ? "Stop taking orders now" : "Start taking orders";
+  $("shopState").innerHTML = `<span class="dot ${shop.accepting_orders ? "" : "off"}"></span>` + (shop.accepting_orders ? "The bot is taking orders" : "The bot is not taking orders (" + (CLOSED_WHY[shop.closed_because] || "closed") + ")") + ` <span class="muted" style="margin-left:8px">Manila time ${esc(shop.now)}</span>`;
+  $("shopSwitch").innerHTML = shop.is_open ? I("player-pause") + "Stop taking orders now" : I("player-play") + "Start taking orders";
   $("hoursOn").checked = shop.hours_enabled;
   $("openTime").value = shop.open_time; $("closeTime").value = shop.close_time;
 }
@@ -586,7 +861,7 @@ function renderCalendar() {
   for (let d = 1; d <= count; d++) {
     const key = calMonth + "-" + String(d).padStart(2, "0"), info = calData.days[key] || {orders: 0, locked: false};
     const cls = ["cal-day", key === today ? "today" : "", key < today ? "past" : "", info.locked ? "locked" : "", key === calSelected ? "sel" : ""].join(" ");
-    html += `<button type="button" class="${cls}" data-day="${key}"><span>${d}</span>${info.locked ? `<span class="lock" title="Locked: closed all day">${LOCK_SVG}</span>` : ""}` +
+    html += `<button type="button" class="${cls}" data-day="${key}"><span>${d}</span>${info.locked ? `<span class="lock" title="Locked: closed all day">${LOCK_ICON}</span>` : ""}` +
       `${info.orders ? `<span class="n">${info.orders} order${info.orders > 1 ? "s" : ""}</span>` : ""}</button>`;
   }
   $("calGrid").innerHTML = html;
@@ -598,32 +873,35 @@ async function loadDay(key) {
   if (key !== calSelected) return;  // the owner clicked another day meanwhile
   const past = key < todayPH();
   $("dayPanel").classList.remove("hidden");
-  $("dayTitle").innerHTML = new Date(key + "T00:00:00Z").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", timeZone: "UTC"}) + (dayInfo.locked ? " " + LOCK_SVG : "");
-  $("lockBtn").innerHTML = dayInfo.locked ? UNLOCK_SVG : LOCK_SVG;
+  $("dayTitle").innerHTML = new Date(key + "T00:00:00Z").toLocaleDateString("en-US", {weekday: "long", month: "long", day: "numeric", timeZone: "UTC"}) + (dayInfo.locked ? LOCK_ICON : "");
+  $("lockBtn").innerHTML = dayInfo.locked ? UNLOCK_ICON : LOCK_ICON;
   $("lockBtn").title = dayInfo.locked ? "Unlock this day" : "Lock this day (close the shop)";
   $("lockBtn").setAttribute("aria-label", $("lockBtn").title);
   $("lockBtn").classList.toggle("is-locked", dayInfo.locked);
   $("lockBtn").disabled = past && !dayInfo.locked;
   $("lockReason").value = dayInfo.reason; $("lockReason").disabled = dayInfo.locked || past;
-  $("dayRows").innerHTML = dayInfo.orders.map(o => `<tr><td>${o.id}</td><td>${esc(o.date.slice(11))}</td>` +
-    `<td>${esc(o.name)}<br><span class="muted">${esc(o.phone)}</span></td><td>${esc(o.items)}</td><td>${peso(o.total)}</td>` +
-    `<td>${STATUS_LABELS[o.status] || esc(o.status)}</td></tr>`).join("") || '<tr><td colspan="6" class="muted">No orders placed on this day.</td></tr>';
+  $("dayRows").innerHTML = dayInfo.orders.map(o => `<div class="tr g-day"><div class="muted">${o.id}</div><div>${esc(o.date.slice(11))}</div>` +
+    `<div>${esc(o.name)}<small>${esc(o.phone)}</small></div><div>${esc(o.items)}</div><div>${peso(o.total)}</div>` +
+    `<div class="s-${esc(o.status)}">${STATUS_LABELS[o.status] || esc(o.status)}</div></div>`).join("") || empty("receipt", "No orders placed on this day.");
 }
 
 async function toggleLock() {
-  showError(null);
   if (!calSelected || !dayInfo) return;
   const key = calSelected;
+  if (!dayInfo.locked) {
+    const label = new Date(key + "T00:00:00Z").toLocaleDateString("en-US", {month: "long", day: "numeric", timeZone: "UTC"});
+    const ok = await confirmBox({title: "Lock " + label + "?", text: "The bot won't take orders that day.", confirmText: "Lock day", danger: true});
+    if (!ok) return;
+  }
   try {
     if (dayInfo.locked) await api("closed-days/" + key, {method: "DELETE"});
     else await api("closed-days/" + key, {method: "PUT", body: JSON.stringify({reason: $("lockReason").value.trim() || null})});
   } catch (e) { showError(e); return; }
-  showOk(dayInfo.locked ? "Day unlocked." : "Day locked. The bot won't take orders that day.");
+  showOk(dayInfo.locked ? "Day unlocked" : "Day locked");
   await loadCalendar();
 }
 
 async function saveShop(body, message) {
-  showError(null);
   try { shop = await api("shop", {method: "PATCH", body: JSON.stringify(body)}); }
   catch (e) { showError(e); return; }
   showOk(message); renderShop();
@@ -643,37 +921,37 @@ async function loadInsights() {
   try { data = await api("insights"); } catch (e) { showError(e); return; }
   if (data.missed) {
     $("missedTotal").innerHTML = `<b>${data.missed.total}</b> order attempt${data.missed.total === 1 ? "" : "s"} while closed`;
-    $("missedRows").innerHTML = data.missed.days.map(d => `<tr><td>${esc(d.day)}</td><td>${d.count}</td>` +
-      `<td>${Object.entries(d.reasons).map(([k, v]) => esc((MISSED_WHY[k] || k) + " × " + v)).join(", ")}</td></tr>`).join("") ||
-      '<tr><td colspan="3" class="muted">No missed orders in this period.</td></tr>';
+    $("missedRows").innerHTML = data.missed.days.map(d => `<div class="tr g-missed"><div>${esc(d.day)}</div><div>${d.count}</div>` +
+      `<div>${Object.entries(d.reasons).map(([k, v]) => esc((MISSED_WHY[k] || k) + " × " + v)).join(", ")}</div></div>`).join("") ||
+      empty("circle-check", "No missed orders in this period.");
   } else {
     $("missedTotal").textContent = "Missed orders are not recorded yet. Run section 4 of supabase/schema.sql.";
     $("missedRows").innerHTML = "";
   }
-  $("unansweredRows").innerHTML = data.unanswered.map(u => `<tr><td>${u.count}</td><td>${esc(u.message)}</td></tr>`).join("") ||
-    '<tr><td colspan="2" class="muted">Nothing unanswered. 🎉</td></tr>';
+  $("unansweredRows").innerHTML = data.unanswered.map(u => `<div class="tr g-unans"><div>${u.count}</div><div>${esc(u.message)}</div></div>`).join("") ||
+    empty("circle-check", "Nothing unanswered.");
 }
 
-const TABS = ["orders", "calendar", "insights", "products", "faq", "delivery", "inbox"];
-document.querySelectorAll("nav button[data-tab]").forEach(b => b.onclick = () => {
-  document.querySelectorAll("nav button").forEach(x => x.classList.toggle("on", x === b));
-  TABS.forEach(t => $(t).classList.toggle("hidden", b.dataset.tab !== t));
-});
 $("filter").onchange = renderOrders;
-document.querySelector('nav button[data-tab="calendar"]').addEventListener("click", loadCalendar);
-document.querySelector('nav button[data-tab="insights"]').addEventListener("click", loadInsights);
+$("orderSearch").oninput = renderOrders;
 $("calPrev").onclick = () => moveMonth(-1);
 $("calNext").onclick = () => moveMonth(1);
 $("calToday").onclick = () => { calMonth = todayPH().slice(0, 7); calSelected = todayPH(); loadCalendar(); };
 $("lockBtn").onclick = toggleLock;
-$("shopSwitch").onclick = () => saveShop({is_open: !shop.is_open}, shop.is_open ? "Orders stopped." : "Orders started.");
-$("saveHours").onclick = () => saveShop({hours_enabled: $("hoursOn").checked, open_time: $("openTime").value, close_time: $("closeTime").value}, "Hours saved.");
-$("refresh").onclick = () => { showError(null); load(); };
+$("shopSwitch").onclick = async () => {
+  if (shop.is_open) {
+    const ok = await confirmBox({title: "Stop taking orders?", text: "The bot will answer questions but won't start or confirm orders.", confirmText: "Stop orders", danger: true});
+    if (!ok) return;
+  }
+  saveShop({is_open: !shop.is_open}, shop.is_open ? "Orders stopped" : "Orders started");
+};
+$("saveHours").onclick = () => saveShop({hours_enabled: $("hoursOn").checked, open_time: $("openTime").value, close_time: $("closeTime").value}, "Hours saved");
+$("refresh").onclick = () => load();
 $("addFaqBtn").onclick = addFaq;
 $("addCakeBtn").onclick = addCake;
 $("addAreaBtn").onclick = addArea;
 $("inboxFilter").onchange = renderInbox;
-$("inboxRefresh").onclick = () => { showError(null); loadInbox(); };
+$("inboxRefresh").onclick = () => loadInbox();
 load();
 loadFaqs();
 loadInbox();

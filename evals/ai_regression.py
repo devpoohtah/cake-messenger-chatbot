@@ -4,11 +4,13 @@ The pytest tests use a fake AI, so they prove the backend is right but cannot te
 your customers. This script can. It calls the real model (a few cents per run), so it is NOT part of `pytest`.
 
     python -m evals.ai_regression
-    python -m evals.ai_regression --model gemini-2.5-flash --delay 0.5 --min-accuracy 90
+    python -m evals.ai_regression --model gemini-2.5-flash --delay 5 --min-accuracy 90
+    python -m evals.ai_regression --show-errors      # when calls fail: shows why
 
 Add real customer messages to evals/messages.json (copy them from the Messenger inbox, with the reading you expect).
 Run it before you change the prompt or the model, and again after: if the score drops, your change caused it.
 
+A message with "asked_for" is a short reply (like "1 of each") to the question "how many of these cakes?".
 Only the fields written for a message are checked: language, intent, faq_topic, product, place and items.
 It uses the built-in FAQ topics, so it may differ slightly from a shop whose FAQ answers were edited in the dashboard.
 """
@@ -22,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.services.ai_service import AIResult, AIUnavailableError, GeminiAIService
+from app.services.conversation_service import ask_context
 from app.services.faq import FAQS
 
 DEFAULT_FILE = Path(__file__).with_name("messages.json")
@@ -62,6 +65,12 @@ def compare(result: AIResult, expected: dict[str, Any]) -> list[tuple[str, Any, 
     return wrong
 
 
+def describe_error(exc: BaseException) -> str:
+    """The kind of failure, e.g. "ClientError 429 RESOURCE_EXHAUSTED". Never the message, which could contain a key."""
+    cause = exc.__cause__ or exc
+    return " ".join(str(part) for part in (type(cause).__name__, getattr(cause, "code", None), getattr(cause, "status", None)) if part)
+
+
 def run(service: Any, menu: list[str], topics: dict[str, str], cases: list[dict[str, Any]],
         delay: float = 0.0, sleep: Callable[[float], None] = time.sleep) -> list[dict[str, Any]]:
     """Send every message to the AI. Each outcome has the case, the differences found, and any error."""
@@ -69,11 +78,13 @@ def run(service: Any, menu: list[str], topics: dict[str, str], cases: list[dict[
     for index, case in enumerate(cases):
         if index and delay:
             sleep(delay)
+        extra = {"context": ask_context(case["asked_for"])} if case.get("asked_for") else {}
         try:
-            result = service.interpret_message(case["text"], "idle", menu, topics)
+            result = service.interpret_message(case["text"], "idle", menu, topics, **extra)
             outcomes.append({"case": case, "wrong": compare(result, case["expect"]), "error": None})
-        except AIUnavailableError:
-            outcomes.append({"case": case, "wrong": [], "error": "the AI call failed"})
+        except AIUnavailableError as exc:
+            outcomes.append({"case": case, "wrong": [], "error": f"the AI call failed: {describe_error(exc)}",
+                             "detail": str(exc.__cause__ or exc)[:400]})
     return outcomes
 
 
@@ -86,7 +97,7 @@ def accuracy(outcomes: list[dict[str, Any]]) -> float:
     return 100.0 * sum(_right(o) for o in outcomes) / len(outcomes) if outcomes else 0.0
 
 
-def report(outcomes: list[dict[str, Any]]) -> str:
+def report(outcomes: list[dict[str, Any]], show_details: bool = False) -> str:
     by_language: dict[str, list[bool]] = defaultdict(list)
     by_field: dict[str, list[bool]] = defaultdict(list)
     for o in outcomes:
@@ -98,6 +109,20 @@ def report(outcomes: list[dict[str, Any]]) -> str:
     lines = [f"Messages read completely right: {accuracy(outcomes):.0f}% ({sum(_right(o) for o in outcomes)}/{len(outcomes)})", "", "By language:"]
     lines += [f"  {lang}: {pct(flags)}" for lang, flags in sorted(by_language.items())]
     lines += ["", "By field:"] + [f"  {field}: {pct(flags)}" for field, flags in sorted(by_field.items())]
+    causes: dict[str, int] = defaultdict(int)
+    for o in outcomes:
+        if o["error"]:
+            causes[o["error"].removeprefix("the AI call failed: ")] += 1
+    if causes:
+        lines += ["", "Failed calls by cause:"] + [f"  {cause} x{count}" for cause, count in sorted(causes.items())]
+        if any("429" in cause for cause in causes):
+            lines.append("  429 means rate limited: run again with a bigger --delay, for example --delay 5.")
+        if show_details:  # what Google or the SDK said, once per kind of failure (never your key)
+            seen: set[str] = set()
+            for o in outcomes:
+                if o["error"] and o["error"] not in seen:
+                    seen.add(o["error"])
+                    lines.append(f"  {o['error'].removeprefix('the AI call failed: ')}: {o.get('detail', '')}")
     failures = [o for o in outcomes if not _right(o)]
     if failures:
         lines += ["", "Differences:"]
@@ -113,7 +138,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check the real AI against known customer messages.")
     parser.add_argument("--file", default=str(DEFAULT_FILE), help="JSON file of messages (default: evals/messages.json)")
     parser.add_argument("--model", default=None, help="Gemini model to test (default: the GEMINI_MODEL setting)")
-    parser.add_argument("--delay", type=float, default=0.0, help="seconds to wait between messages (rate limits)")
+    parser.add_argument("--delay", type=float, default=1.0, help="seconds to wait between messages (default 1; use 5 on a free key)")
+    parser.add_argument("--show-errors", action="store_true", help="also print what Google or the SDK said about each kind of failure")
     parser.add_argument("--min-accuracy", type=float, default=0.0, help="exit with an error below this percent")
     args = parser.parse_args(argv)
 
@@ -124,7 +150,7 @@ def main(argv: list[str] | None = None) -> int:
         outcomes = run(GeminiAIService(args.model), menu, topics, cases, args.delay)
     finally:
         logging.disable(logging.NOTSET)
-    print(report(outcomes))
+    print(report(outcomes, args.show_errors))
     if outcomes and all(o["error"] for o in outcomes):
         print("\nEvery AI call failed. Check that GEMINI_API_KEY is set in .env and that you are online.")
     return 1 if accuracy(outcomes) < args.min_accuracy else 0

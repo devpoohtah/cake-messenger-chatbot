@@ -45,7 +45,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "summary": (
             "Here's your order:\n{items}\nTotal: {total}\n\n"
             "Name: {name}\nContact: {contact}\n{where}\n{notes}\n"
-            "Payment is in cash when you receive your cake. Orders can't be cancelled once confirmed.\n\n"
+            "Payment is in cash when you receive your cake. You can cancel while your order is still pending, before the owner starts it.\n\n"
             "Tap Confirm to place your order."
         ),
         
@@ -91,7 +91,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ask_area_plain": "Which city or municipality are you in?",
         "ask_area_other": "Please type your city or municipality and province. The owner will confirm the delivery fee for your area.",
         "area_pick": "Please tap your area from the buttons below.",
-        "area_not_found": "Sorry, we don't deliver to that area yet. We deliver to: {areas}. Please tap your area below, or choose pick up.",
+        "area_not_found": "Sorry, we don't deliver to that area yet.",
         "area_changed": "Sorry, we can't deliver to that area right now. Please choose your area again.",
         "ask_landmark": "Any landmark near your address, like a church, school or store? Type it, or tap No landmark.",
         "btn_other_area": "Other area",
@@ -139,6 +139,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "quote_no_total": "I can't give a total until that's sorted out. Tell me how many you'd like of what's available.",
         "quote_footer": "You'll see your final total before you confirm.",
         "quote_lost": "Tell me which cakes and how many, and I'll work out the total.",
+        "items_confirm": "Here's what I understood for your order:\n{lines}\nIs that right?",
+        "items_need_qty": "How many of each would you like?",
+        "items_retry": "Tell me which of these you'd like and how many.",
+        "items_no": "No problem. Tell me which cakes and how many, or tap Order now.",
+        "items_lost": "I don't have that list anymore. Tell me which cakes and how many.",
+        "btn_items_yes": "✅ Yes, add them",
+        "btn_items_no": "✏️ No",
+        "btn_order_these": "Order these",
     },
     
     "tl": {
@@ -183,7 +191,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "summary": (
             "Narito po ang order ninyo:\n{items}\nKabuuan: {total}\n\n"
             "Pangalan: {name}\nContact: {contact}\n{where}\n{notes}\n"
-            "Cash po ang bayad pagtanggap ng cake. Hindi na po maaaring i-cancel ang order kapag nakumpirma na.\n\n"
+            "Cash po ang bayad pagtanggap ng cake. Puwede po ninyong i-cancel ang order habang pending pa ito, bago ito simulan ng owner.\n\n"
             "Pindutin ang Confirm para ilagay ang order."
         ),
         "btn_confirm": "✅ Confirm",
@@ -228,7 +236,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ask_area_plain": "Saang lungsod o munisipyo po kayo?",
         "ask_area_other": "Paki-type po ang lungsod o munisipyo at probinsya ninyo. Kukumpirmahin po ng owner ang delivery fee para sa area ninyo.",
         "area_pick": "Pindutin po ang area ninyo mula sa mga button sa ibaba.",
-        "area_not_found": "Pasensya na po, hindi pa po kami nagde-deliver sa area na iyon. Nagde-deliver po kami sa: {areas}. Pindutin po ang area ninyo sa ibaba, o piliin ang pick up.",
+        "area_not_found": "Pasensya na po, hindi pa po kami nagde-deliver sa area na iyon.",
         "area_changed": "Pasensya na po, hindi po kami makapag-deliver sa area na iyon ngayon. Pumili po ulit ng area.",
         "ask_landmark": "May landmark po ba malapit sa address ninyo, tulad ng simbahan, paaralan o tindahan? I-type po ito, o pindutin ang Walang landmark.",
         "btn_other_area": "Ibang area",
@@ -276,6 +284,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "quote_no_total": "Hindi ko pa po maibibigay ang kabuuan hangga't hindi ito naaayos. Sabihin lang po kung ilan ang gusto ninyo sa mga available.",
         "quote_footer": "Makikita po ninyo ang final na kabuuan bago kayo mag-confirm.",
         "quote_lost": "Sabihin lang po kung anong cake at ilan, at kakalkulahin ko po ang kabuuan.",
+        "items_confirm": "Ito po ang naintindihan ko sa order ninyo:\n{lines}\nTama po ba?",
+        "items_need_qty": "Ilan po ng bawat isa ang gusto ninyo?",
+        "items_retry": "Sabihin lang po kung alin dito ang gusto ninyo at ilan.",
+        "items_no": "Sige po. Sabihin lang po kung anong cake at ilan, o pindutin ang Mag-order.",
+        "items_lost": "Wala na po akong listahang iyon. Sabihin lang po kung anong cake at ilan.",
+        "btn_items_yes": "✅ Oo, idagdag",
+        "btn_items_no": "✏️ Hindi",
+        "btn_order_these": "I-order ang mga ito",
     },
     
     "hil": {
@@ -320,7 +336,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "summary": (
             "Ari ang imo order:\n{items}\nTotal: {total}\n\n"
             "Ngalan: {name}\nContact: {contact}\n{where}\n{notes}\n"
-            "Cash ang bayad kon mabaton mo na ang cake. Indi na mahimo ma-cancel ang order kon na-confirm na.\n\n"
+            "Cash ang bayad kon mabaton mo na ang cake. Puwede mo i-cancel ang order samtang pending pa ini, antes ini sugdan sang owner.\n\n"
             "Pindota ang Confirm para ibutang ang order."
         ),
         "btn_confirm": "✅ Confirm",
@@ -365,7 +381,7 @@ MESSAGES: dict[str, dict[str, str]] = {
         "ask_area_plain": "Diin nga syudad ukon munisipyo ka?",
         "ask_area_other": "Palihog i-type ang imo syudad ukon munisipyo kag probinsya. Kumpirmahon sang owner ang delivery fee para sa imo area.",
         "area_pick": "Palihog pislita ang imo area sa mga button sa idalom.",
-        "area_not_found": "Pasensya na, wala pa kami nagapadala sa sina nga area. Nagapadala kami sa: {areas}. Pislita ang imo area sa idalom, ukon pilia ang pick up.",
+        "area_not_found": "Pasensya na, wala pa kami nagapadala sa sina nga area.",
         "area_changed": "Pasensya na, indi kami makapadala sa sina nga area subong. Palihog pili liwat sang area.",
         "ask_landmark": "May landmark bala malapit sa imo address, pareho sang simbahan, eskwelahan ukon tindahan? I-type ini, ukon pislita ang Wala landmark.",
         "btn_other_area": "Lain nga area",
@@ -413,6 +429,14 @@ MESSAGES: dict[str, dict[str, str]] = {
         "quote_no_total": "Indi ko pa maghatag sang total tubtob maayos ini. Sulti lang kon pila ang gusto mo sa mga available.",
         "quote_footer": "Makita mo ang final nga total antes ka mag-confirm.",
         "quote_lost": "Sulti lang kon ano nga cake kag pila, kag kuwentahon ko ang total.",
+        "items_confirm": "Amo ni ang akon nahangpan sa order mo:\n{lines}\nTama bala?",
+        "items_need_qty": "Pila kada isa ang gusto mo?",
+        "items_retry": "Sulti lang kon ano sa sini ang gusto mo kag pila.",
+        "items_no": "Sige. Sulti lang kon ano nga cake kag pila, ukon pislita ang Mag-order.",
+        "items_lost": "Wala na ko sina nga lista. Sulti lang kon ano nga cake kag pila.",
+        "btn_items_yes": "✅ Huo, dugangi",
+        "btn_items_no": "✏️ Indi",
+        "btn_order_these": "I-order ini",
     },
 }
 
