@@ -6,6 +6,7 @@ validates it and only then writes - atomically, via the Postgres RPC function
 """
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Any
 
@@ -145,6 +146,31 @@ def get_latest_order(client: Any, messenger_id: str) -> dict[str, Any] | None:
         "total_amount": Decimal(str(r["total_amount"])),
         "items": [((i.get("products") or {}).get("name", "?"), i["quantity"]) for i in r.get("order_items") or []],
     }
+
+def best_sellers(client: Any, days: int = 30) -> tuple[list[tuple[str, int]], int]:
+    """Cakes ranked by how many were ordered in the last `days` days, cancelled orders left out.
+
+    Returns ([(cake name, quantity), ...] best first, total quantity of all cakes).
+    """
+    since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+    rows = (
+        client.table("orders")
+        .select("order_id, order_items(quantity, products(name))")
+        .gte("order_date", since)
+        .neq("status", "cancelled")
+        .limit(5000)
+        .execute()
+        .data
+        or []
+    )
+    totals: dict[str, int] = {}
+    for row in rows:
+        for item in row.get("order_items") or []:
+            name = (item.get("products") or {}).get("name")
+            if name:
+                totals[name] = totals.get(name, 0) + int(item["quantity"])
+    return sorted(totals.items(), key=lambda pair: (-pair[1], pair[0])), sum(totals.values())
+
 
 ACTIVE_STATUSES = ("pending", "confirmed", "preparing", "ready", "out_for_delivery")  # not completed, not cancelled
 

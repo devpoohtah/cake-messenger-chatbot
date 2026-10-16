@@ -51,6 +51,8 @@ SHOW_DISCLAIMER = True  # add the "automated assistant" note to the greeting and
 QUOTE_MAX_ITEMS = 5  # cakes quoted in one price question
 QUOTE_MAX_QTY = 99  # a bigger number is treated as "no quantity given"
 NOTE_EVERY_HOURS = 24  # the "automated assistant" note is added at most this often per customer
+BEST_SELLER_DAYS = 30  # the best seller is counted over this many days of orders
+BEST_SELLER_MIN_SOLD = 10  # with fewer cakes sold than this, the bot does not name a best seller
 PICKUP_LOCATION = "Pickup at shop"  # stored in orders.location for pick-up orders
 MAX_CAKES_PER_ORDER = 20  # all cakes together; the per-cake cap is MAX_QUANTITY_PER_ITEM in order_service
 MAX_NOTES_LENGTH = 200
@@ -785,6 +787,8 @@ class ConversationService:
                 live = self._hours_answer(lang)
             elif topic == "delivery":  # areas and fees come from the delivery_areas table
                 live = self._delivery_answer(lang, result.place)
+            elif topic == "best_seller":  # counted from the real orders of the last 30 days
+                live = self._best_seller_answer(lang, products)
             if live is not None:
                 return [self._disclaimed(lang, live)]
             row = load_faqs(self._client).get(topic)
@@ -979,6 +983,30 @@ class ConversationService:
             area, items = None, []
         quote = self._quote_reply(lang, items, None, products, area=area) if area and items else None
         return quote or Reply(text=t(lang, "quote_lost"), options=self._start_options(lang))
+
+    def _best_seller_answer(self, lang: str, products) -> Reply | None:
+        """The cake ordered most in the last BEST_SELLER_DAYS days, counted from the orders table.
+
+        None (the FAQ text answers) when there are too few orders to say, or the lookup fails. A cake that is sold out
+        or hidden is skipped, so the bot never points at something the customer cannot order.
+        """
+        try:
+            ranked, total = orders.best_sellers(self._client, BEST_SELLER_DAYS)
+        except Exception:
+            logger.warning("Could not count the best sellers")
+            return None
+        if total < BEST_SELLER_MIN_SOLD:
+            return None
+        available = {p["name"]: p for p in products if p.get("is_available")}
+        top = [(name, qty) for name, qty in ranked if name in available][:3]
+        if not top:
+            return None
+        name, sold = top[0]
+        lines = [t(lang, "best_seller_top", name=name, n=sold, days=BEST_SELLER_DAYS)]
+        if len(top) > 1:
+            lines.append(t(lang, "best_seller_also", names=", ".join(n for n, _ in top[1:])))
+        options = [(t(lang, "btn_order_this"), f"ORDER:{available[name]['product_id']}")] + self._start_options(lang)
+        return Reply(text="\n".join(lines), options=options)
 
     def _handoff_text(self, lang: str) -> str:
         """Tell the customer when to expect the owner: soon while open, at reopening time while closed."""

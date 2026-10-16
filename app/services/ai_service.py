@@ -107,6 +107,7 @@ Examples:
 - "magkano ang delivery?" and "tag-pila ang delivery fee?" are faq_question about delivery
 - "nagadeliver kamo sa Jaro?", "do you deliver to Molo?" and "pwede ba i-deliver sa Mandurriao?" are faq_question about delivery, with place set to Jaro, Molo and Mandurriao
 - "how long is delivery?", "gaano katagal bago ma-deliver?" and "tag-pila ka oras ang delivery?" are faq_question about lead_time
+- "what is your best seller?", "ano po ang best seller ninyo?" and "diin ang best seller?" are faq_question about best_seller
 - "can I order for tomorrow?", "pwede ba mag-pre-order?" and "pwede mag-reserve para sa Sabado?" are faq_question about advance_order
 - "may bulk order ba kayo?", "pwede ba maraming cake para sa party?" and "for an event, can we order a lot?" are faq_question about bulk_orders
 - "i-cancel ko na ang order ko" and "gusto ko ikansel ang order ko" are cancel_order

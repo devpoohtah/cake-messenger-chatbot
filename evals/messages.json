@@ -55,6 +55,9 @@
   {"text": "gusto ko mag-order sang 2 nutella kag 2 leche flan", "expect": {"language": "hil", "intent": "start_order", "items": [{"product": "Nutella Ferrero Cake", "quantity": 2}, {"product": "Leche Flan", "quantity": 2}]}},
   {"text": "1 of each", "expect": {"language": "en", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
   {"text": "tig-isa po", "expect": {"language": "tl", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
-  {"text": "tag-isa gid", "expect": {"language": "hil", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]}
+  {"text": "tag-isa gid", "expect": {"language": "hil", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
+  {"text": "what is your best seller?", "expect": {"language": "en", "intent": "faq_question", "faq_topic": "best_seller"}},
+  {"text": "ano po ang best seller ninyo?", "expect": {"language": "tl", "intent": "faq_question", "faq_topic": "best_seller"}},
+  {"text": "diin ang best seller?", "expect": {"language": "hil", "intent": "faq_question", "faq_topic": "best_seller"}}
  ]
 }

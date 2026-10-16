@@ -147,6 +147,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_items_yes": "✅ Yes, add them",
         "btn_items_no": "✏️ No",
         "btn_order_these": "Order these",
+        "best_seller_top": "🏆 Our best seller is {name}, with {n} sold in the last {days} days.",
+        "best_seller_also": "Also popular: {names}.",
     },
     
     "tl": {
@@ -292,6 +294,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_items_yes": "✅ Oo, idagdag",
         "btn_items_no": "✏️ Hindi",
         "btn_order_these": "I-order ang mga ito",
+        "best_seller_top": "🏆 Ang best seller po namin ay {name}, {n} ang naibenta sa nakaraang {days} araw.",
+        "best_seller_also": "Patok din po: {names}.",
     },
     
     "hil": {
@@ -437,6 +441,8 @@ MESSAGES: dict[str, dict[str, str]] = {
         "btn_items_yes": "✅ Huo, dugangi",
         "btn_items_no": "✏️ Indi",
         "btn_order_these": "I-order ini",
+        "best_seller_top": "🏆 Ang best seller namon amo ang {name}, {n} ang nabaligya sa nagligad nga {days} ka adlaw.",
+        "best_seller_also": "Bantog man: {names}.",
     },
 }
 

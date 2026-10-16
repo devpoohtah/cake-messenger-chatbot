@@ -54,6 +54,12 @@ FAQS: dict[str, dict[str, str]] = {
         "tl": "Bukas po kami mula 11:00 AM hanggang 10:00 PM.",
         "hil": "Bukas kami halin 11:00 AM tubtob 10:00 PM.",
     },
+    "best_seller": {
+        "description": "which cake is the best seller, the most popular or recommended cake",
+        "en": "We don't have enough orders yet to name a best seller. Tap See menu to look at all our cakes and their prices.",
+        "tl": "Wala pa po kaming sapat na order para masabi kung alin ang best seller. Pindutin ang Tingnan ang menu para makita ang lahat ng cake at presyo.",
+        "hil": "Wala pa kami sang igo nga order agod masiling kon ano ang best seller. Pislita ang Tan-awa ang menu agod makita ang tanan nga cake kag presyo.",
+    },
     "lead_time": {
         "description": "how long until the cake is ready, whether a cake can be had today, or how long delivery takes",
         "en": "Our cakes are premade, so there's no baking wait: pick-up orders are ready as soon as the owner confirms them, during our opening hours. For delivery, the owner will tell you the estimated time when they confirm your order.",
