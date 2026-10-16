@@ -6,6 +6,7 @@ always come from the database), and creates an order only after Confirm.
 """
 import logging
 import re
+import threading
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -49,6 +50,25 @@ DELIVERY_FEE = Decimal("50")  # flat fee, used only while the owner has set no d
 DRAFT_EXPIRY_HOURS = 24  # an unfinished order is cleared after this long without a message from the customer
 SHOW_DISCLAIMER = True  # add the "automated assistant" note to the greeting and to FAQ answers
 QUOTE_MAX_ITEMS = 5  # cakes quoted in one price question
+
+# Meta resends a webhook if we are slow (the AI call can take seconds). The saved last_mid only catches a retry that
+# arrives AFTER the first one finished, so a message being processed right now is claimed here to catch the early ones.
+_inflight: set[tuple[str, str]] = set()
+_inflight_lock = threading.Lock()
+
+
+def _claim(sender_id: str, message_id: str) -> bool:
+    """True if this message was not already being processed by this process."""
+    with _inflight_lock:
+        if (sender_id, message_id) in _inflight:
+            return False
+        _inflight.add((sender_id, message_id))
+        return True
+
+
+def _release(sender_id: str, message_id: str) -> None:
+    with _inflight_lock:
+        _inflight.discard((sender_id, message_id))
 QUOTE_MAX_QTY = 99  # a bigger number is treated as "no quantity given"
 NOTE_EVERY_HOURS = 24  # the "automated assistant" note is added at most this often per customer
 BEST_SELLER_DAYS = 30  # the best seller is counted over this many days of orders
@@ -150,10 +170,11 @@ def _plain(replies: list[Reply]) -> list[Reply]:
 # Words that settle the language when the AI could not (it says null for some short messages).
 _HIL_CLUES = {"kamo", "kmo", "subong", "sang", "pila", "diin", "indi", "palihog", "gid", "kag", "kon", "buwas",
               "halin", "tubtob", "akon", "imo", "amon"}
-_TL_CLUES = {"kayo", "ngayon", "po", "opo", "magkano", "saan", "hindi", "naman", "nasaan", "namin", "ninyo",
-             "natin", "yung", "sige", "iyong", "katagal", "pakisabi"}
+_TL_CLUES = {"kayo", "ngayon", "po", "opo", "pong", "magkano", "saan", "hindi", "naman", "nasaan", "namin", "ninyo",
+             "natin", "yung", "sige", "iyong", "katagal", "pakisabi", "umorder", "ng", "mga"}
 _EN_CLUES = {"how", "much", "the", "do", "you", "your", "can", "is", "are", "what", "where", "when", "want",
-             "would", "like", "please", "thank", "thanks", "hello", "hi", "open", "today", "tomorrow", "with", "and", "for"}
+             "would", "like", "please", "thank", "thanks", "hello", "hi", "open", "today", "tomorrow", "with", "and", "for",
+             "of", "each", "to", "my", "i"}
 
 
 def _guess_language(text: str) -> str | None:
@@ -166,6 +187,27 @@ def _guess_language(text: str) -> str | None:
     if hil == 0 and any(w in _EN_CLUES for w in words):
         return "en"
     return None
+
+
+def _place_from_text(text: str, areas: list[dict[str, Any]]) -> str | None:
+    """The delivery area named in the message, found by us when the AI left `place` empty."""
+    if not areas:
+        return None
+    area, _ = _match_area(text, areas)
+    return str(area["name"]) if area else None
+
+
+def _pick_language(ai_language: str | None, text: str) -> str | None:
+    """The AI's language, unless it is missing or says Tagalog while the words are clearly Hiligaynon.
+
+    Hiligaynon is often misread as Tagalog (\"buwas\", \"kamo\"), but its clue words rarely appear in Tagalog.
+    """
+    guessed = _guess_language(text)
+    if ai_language not in LANGUAGES:
+        return guessed
+    if ai_language == "tl" and guessed == "hil":
+        return "hil"
+    return ai_language
 
 
 def ask_context(names: list[str]) -> str:
@@ -298,7 +340,19 @@ class ConversationService:
         self, sender_id: str, text: str, message_id: str | None = None, payload: str | None = None,
         attachment: str | None = None,
     ) -> list[Reply] | None:
-        """Return the replies to send, or None if this message was already processed (Meta retry)."""
+        """Return the replies to send, or None if this message was already processed or is being processed (Meta retry)."""
+        if message_id and not _claim(sender_id, message_id):
+            return None
+        try:
+            return self._handle(sender_id, text, message_id, payload, attachment)
+        finally:
+            if message_id:
+                _release(sender_id, message_id)
+
+    def _handle(
+        self, sender_id: str, text: str, message_id: str | None = None, payload: str | None = None,
+        attachment: str | None = None,
+    ) -> list[Reply] | None:
         state, draft = self._load(sender_id)
         if message_id and draft.get("last_mid") == message_id:
             return None
@@ -449,9 +503,16 @@ class ConversationService:
         except AIUnavailableError:  # the AI is down: say so, and don't count it as an unknown question
             return self._thanks(state, draft, products, available, "ai_unavailable")
 
-        detected = result.language if result.language in LANGUAGES else _guess_language(text)
+        detected = _pick_language(result.language, text)
         lang = self._resolve_lang(lang, detected)
         draft = {**draft, "lang": lang}
+        if result.place is None and result.intent in (Intent.PRICE_QUESTION, Intent.FAQ_QUESTION):
+            try:  # the AI often skips `place`; the delivery areas table is the source of truth, so look there
+                found = _place_from_text(text, self._delivery_areas()[0])
+            except Exception:
+                found = None
+            if found:
+                result = result.model_copy(update={"place": found})
         if result.intent == Intent.TALK_TO_OWNER:
             return self._start_handoff(sender_id, text, lang, state, draft)
         if result.intent == Intent.THANKS and not asking_name:
@@ -881,6 +942,7 @@ class ConversationService:
         merged: dict[int, int | None] = {}
         chosen: list[dict[str, Any]] = []
         unknown: list[str] = []
+        seen: set[tuple[int, int]] = set()
         for item in list(raw_items)[:QUOTE_MAX_ITEMS]:
             product = _find_product(item.product, products)
             if product is None:
@@ -891,9 +953,13 @@ class ConversationService:
             if pid not in merged:
                 chosen.append(product)
                 merged[pid] = qty
-            elif qty is not None:  # the same cake named twice: add up
+            elif qty is not None and (pid, qty) in seen:
+                continue  # an identical repeat is the AI looping, not the customer asking again
+            elif qty is not None:  # the same cake named twice with different amounts: add up
                 total_qty = (merged[pid] or 0) + qty
                 merged[pid] = total_qty if total_qty <= QUOTE_MAX_QTY else None
+            if qty is not None:
+                seen.add((pid, qty))
         return chosen, merged, unknown
 
     def _propose_items(self, lang: str, raw_items, products) -> list[Reply] | None:

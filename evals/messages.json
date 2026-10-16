@@ -1,6 +1,7 @@
 {
  "_note": "STARTER messages written by hand. Replace or add real customer messages from the Messenger inbox, each with the reading you expect (only the fields you write are checked).",
  "menu": ["Nutella Ferrero Cake", "Chocolate Moist Cake", "Leche Flan", "Mango Float", "Yema Cake"],
+ "areas": ["Molo", "Jaro", "Mandurriao"],
  "cases": [
   {"text": "hi", "expect": {"language": "en", "intent": "greeting"}},
   {"text": "how much is the yema cake?", "expect": {"language": "en", "intent": "price_question", "items": [{"product": "Yema Cake", "quantity": null}]}},
@@ -58,6 +59,9 @@
   {"text": "tag-isa gid", "expect": {"language": "hil", "items": [{"product": "Mango Float", "quantity": 1}, {"product": "Yema Cake", "quantity": 1}]}, "asked_for": ["Mango Float", "Yema Cake"]},
   {"text": "what is your best seller?", "expect": {"language": "en", "intent": "faq_question", "faq_topic": "best_seller"}},
   {"text": "ano po ang best seller ninyo?", "expect": {"language": "tl", "intent": "faq_question", "faq_topic": "best_seller"}},
-  {"text": "diin ang best seller?", "expect": {"language": "hil", "intent": "faq_question", "faq_topic": "best_seller"}}
+  {"text": "diin ang best seller?", "expect": {"language": "hil", "intent": "faq_question", "faq_topic": "best_seller"}},
+  {"text": "how much for 2 mango float delivered to Jaro?", "expect": {"language": "en", "intent": "price_question", "place": "Jaro", "items": [{"product": "Mango Float", "quantity": 2}]}},
+  {"text": "pila ang 2 mango float kon ideliver sa Jaro?", "expect": {"language": "hil", "intent": "price_question", "place": "Jaro", "items": [{"product": "Mango Float", "quantity": 2}]}},
+  {"text": "may leche flan kamo?", "expect": {"language": "hil", "intent": "product_question", "product": "Leche Flan"}}
  ]
 }

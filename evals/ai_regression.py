@@ -24,7 +24,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from app.services.ai_service import AIResult, AIUnavailableError, GeminiAIService
-from app.services.conversation_service import ask_context
+from app.services.conversation_service import _pick_language, _place_from_text, ask_context
 from app.services.faq import FAQS
 
 DEFAULT_FILE = Path(__file__).with_name("messages.json")
@@ -37,18 +37,29 @@ def load_cases(path: Path | str = DEFAULT_FILE) -> tuple[list[str], list[dict[st
     return list(data["menu"]), list(data["cases"])
 
 
-def _items(items: Any) -> list[tuple[str, int | None]]:
-    """Cakes as comparable (name, quantity) pairs, in a fixed order."""
+def _items(items: Any, collapse: bool = False) -> list[tuple[str, int | None]]:
+    """Cakes as comparable (name, quantity) pairs, in a fixed order.
+
+    collapse=True drops exact repeats, the same cleanup the bot does before it quotes a price."""
     pairs = []
     for item in items or []:
         name, qty = (item["product"], item.get("quantity")) if isinstance(item, dict) else (item.product, item.quantity)
-        pairs.append((str(name).strip().lower(), qty))
+        pair = (str(name).strip().lower(), qty)
+        if collapse and pair in pairs:
+            continue
+        pairs.append(pair)
     return sorted(pairs, key=lambda pair: (pair[0], -1 if pair[1] is None else pair[1]))
+
+
+def load_areas(path: Path | str = DEFAULT_FILE) -> list[dict[str, Any]]:
+    """Delivery areas the shop serves (the bot reads these from its database), for the place fallback."""
+    data = json.loads(Path(path).read_text(encoding="utf-8"))
+    return [{"name": name} for name in data.get("areas", [])]
 
 
 def _normal(field: str, value: Any) -> Any:
     if field == "items":
-        return _items(value)
+        return _items(value, collapse=True)
     if field == "intent" and hasattr(value, "value"):
         value = value.value
     return value.strip().lower() if isinstance(value, str) else value
@@ -72,7 +83,8 @@ def describe_error(exc: BaseException) -> str:
 
 
 def run(service: Any, menu: list[str], topics: dict[str, str], cases: list[dict[str, Any]],
-        delay: float = 0.0, sleep: Callable[[float], None] = time.sleep) -> list[dict[str, Any]]:
+        delay: float = 0.0, sleep: Callable[[float], None] = time.sleep,
+        areas: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Send every message to the AI. Each outcome has the case, the differences found, and any error."""
     outcomes = []
     for index, case in enumerate(cases):
@@ -81,7 +93,14 @@ def run(service: Any, menu: list[str], topics: dict[str, str], cases: list[dict[
         extra = {"context": ask_context(case["asked_for"])} if case.get("asked_for") else {}
         try:
             result = service.interpret_message(case["text"], "idle", menu, topics, **extra)
-            outcomes.append({"case": case, "wrong": compare(result, case["expect"]), "error": None})
+            raw = {"language": result.language, "place": result.place, "items": _items(result.items)}
+            # Score what the bot would really use: the AI's answer plus the same fallbacks the bot applies.
+            update = {"language": _pick_language(result.language, case["text"])}
+            if result.place is None and areas:
+                update["place"] = _place_from_text(case["text"], areas)
+            result = result.model_copy(update=update)
+            outcomes.append({"case": case, "wrong": compare(result, case["expect"]), "error": None,
+                             "raw_language": raw["language"], "raw_place": raw["place"], "raw_items": raw["items"]})
         except AIUnavailableError as exc:
             outcomes.append({"case": case, "wrong": [], "error": f"the AI call failed: {describe_error(exc)}",
                              "detail": str(exc.__cause__ or exc)[:400]})
@@ -109,6 +128,15 @@ def report(outcomes: list[dict[str, Any]], show_details: bool = False) -> str:
     lines = [f"Messages read completely right: {accuracy(outcomes):.0f}% ({sum(_right(o) for o in outcomes)}/{len(outcomes)})", "", "By language:"]
     lines += [f"  {lang}: {pct(flags)}" for lang, flags in sorted(by_language.items())]
     lines += ["", "By field:"] + [f"  {field}: {pct(flags)}" for field, flags in sorted(by_field.items())]
+    def alone(field: str, label: str, got: Callable[[dict[str, Any]], Any], want: Callable[[Any], Any]) -> None:
+        flags = [got(o) == want(o["case"]["expect"][field]) for o in outcomes
+                 if o["error"] is None and field in o["case"]["expect"] and f"raw_{field}" in o]
+        if flags:
+            lines.append(f"  {label} from the AI alone (before the bot's own fallbacks): {pct(flags)}")
+
+    alone("language", "language", lambda o: _normal("language", o["raw_language"]), lambda v: _normal("language", v))
+    alone("place", "place", lambda o: _normal("place", o["raw_place"]), lambda v: _normal("place", v))
+    alone("items", "items", lambda o: o["raw_items"], lambda v: _items(v))
     causes: dict[str, int] = defaultdict(int)
     for o in outcomes:
         if o["error"]:
@@ -147,7 +175,7 @@ def main(argv: list[str] | None = None) -> int:
     topics = {topic: row["description"] for topic, row in FAQS.items()}
     logging.disable(logging.CRITICAL)  # the report lists every failure; skip one log line per failed call
     try:
-        outcomes = run(GeminiAIService(args.model), menu, topics, cases, args.delay)
+        outcomes = run(GeminiAIService(args.model), menu, topics, cases, args.delay, areas=load_areas(args.file))
     finally:
         logging.disable(logging.NOTSET)
     print(report(outcomes, args.show_errors))
