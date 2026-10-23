@@ -4,6 +4,7 @@ The AI never writes to the database and never writes prices, order totals or
 shop policies. The backend validates everything it returns.
 """
 import logging
+import threading
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -150,9 +151,14 @@ class AIService(ABC):
 class GeminiAIService(AIService):
     def __init__(self, model: str | None = None) -> None:
         self._client: genai.Client | None = None
+        self._client_lock = threading.Lock()  # sync routes run in threads: build the client only once
         self._model = model  # None = the GEMINI_MODEL setting
 
     def _get_client(self) -> genai.Client:
+        with self._client_lock:
+            return self._get_client_locked()
+
+    def _get_client_locked(self) -> genai.Client:
         if self._client is None:
             key = get_settings().gemini_api_key.get_secret_value()
             if not key:

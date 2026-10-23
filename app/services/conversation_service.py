@@ -8,8 +8,10 @@ import logging
 import re
 import threading
 from dataclasses import dataclass, field, replace
+from collections import defaultdict
 from datetime import datetime, timezone
 from decimal import Decimal
+from threading import Lock
 from types import SimpleNamespace
 from typing import Any
 
@@ -20,6 +22,8 @@ from app.services import owner_inbox, shop_hours
 from app.services.faq_store import load_faqs
 from app.services.messages import MESSAGES, t
 from app.services.messenger_service import LOW_STOCK_AT
+
+_sender_locks = defaultdict(Lock)  # one lock per customer: a Meta retry waits for the first copy to finish
 
 logger = logging.getLogger("uvicorn.error")
 
@@ -1434,7 +1438,8 @@ def handle_incoming_message(
             from app.services.ai_service import GeminiAIService
 
             _ai_service = GeminiAIService()
-        return ConversationService(_ai_service, get_supabase_client()).handle(sender_id, text, message_id, payload, attachment)
+        with _sender_locks[sender_id]:  # the retry then sees last_mid and is dropped instead of running in parallel
+            return ConversationService(_ai_service, get_supabase_client()).handle(sender_id, text, message_id, payload, attachment)
     except Exception:
         logger.exception("Conversation handling failed")
         return [Reply(text=t("en", "error"))]
