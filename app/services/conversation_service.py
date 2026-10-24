@@ -110,6 +110,10 @@ def _wants_owner(words: str) -> bool:
 
 CONTACT_FIELDS = ("customer_name", "contact_number")  # the delivery address is collected in parts (street, area, landmark)
 DELIVERY_PARTS = ("street", "area", "area_other", "landmark")  # values of draft["asking"] while the address is asked
+# Questions answered with free text (a name, an address, a note). Such an answer says nothing about the customer's language.
+FREE_TEXT_ASKS = ("customer_name", "location", "notes", "dedication") + DELIVERY_PARTS
+# Questions about which cakes the customer wants. Several cakes typed here are repeated back for a Yes, like at the start.
+CART_ASKS = ("product", "quantity", "add_more")
 
 
 @dataclass
@@ -201,12 +205,16 @@ def _place_from_text(text: str, areas: list[dict[str, Any]]) -> str | None:
     return str(area["name"]) if area else None
 
 
-def _pick_language(ai_language: str | None, text: str) -> str | None:
+def _pick_language(ai_language: str | None, text: str, strict: bool = False) -> str | None:
     """The AI's language, unless it is missing or says Tagalog while the words are clearly Hiligaynon.
 
     Hiligaynon is often misread as Tagalog (\"buwas\", \"kamo\"), but its clue words rarely appear in Tagalog.
+    strict=True is for a name, an address or a note: the AI's guess is ignored and only clue words count, so a nickname
+    like \"krizzyy\" can never switch the language.
     """
     guessed = _guess_language(text)
+    if strict:
+        return guessed
     if ai_language not in LANGUAGES:
         return guessed
     if ai_language == "tl" and guessed == "hil":
@@ -507,7 +515,12 @@ class ConversationService:
         except AIUnavailableError:  # the AI is down: say so, and don't count it as an unknown question
             return self._thanks(state, draft, products, available, "ai_unavailable")
 
-        detected = _pick_language(result.language, text)
+        # A name, address or landmark typed as the answer to a question tells us nothing about the language.
+        answering_free_text = (
+            state == COLLECTING and draft.get("asking") in FREE_TEXT_ASKS
+            and result.intent in (Intent.PROVIDE_ORDER_DETAILS, Intent.UNKNOWN, Intent.THANKS, Intent.SMALL_TALK, Intent.GREETING)
+        )
+        detected = _pick_language(result.language, text, strict=answering_free_text)
         lang = self._resolve_lang(lang, detected)
         draft = {**draft, "lang": lang}
         if result.place is None and result.intent in (Intent.PRICE_QUESTION, Intent.FAQ_QUESTION):
@@ -523,14 +536,19 @@ class ConversationService:
             return self._thanks(state, draft, products, available)
         if state != IDLE and result.intent == Intent.CANCEL_ORDER:
             return self._cancelled(lang)
-        if state == IDLE and ask and result.items:  # "1 of each" after "how many would you like?"
+        if state in (IDLE, COLLECTING) and ask and result.items:  # "1 of each" after "how many would you like?"
             answered = self._answer_quantities(lang, ask, result, products)
             if answered is not None:
-                return answered, IDLE, draft
+                return answered, state, draft
         if state == IDLE and result.intent == Intent.START_ORDER and result.items:
             proposal = self._propose_items(lang, result.items, products)
             if proposal is not None:  # several cakes in one sentence: repeat them back and wait for the customer's Yes
                 return proposal, IDLE, draft
+        if (state == COLLECTING and result.items and draft.get("asking") in CART_ASKS
+                and result.intent in (Intent.START_ORDER, Intent.PROVIDE_ORDER_DETAILS)):
+            proposal = self._propose_items(lang, result.items, products)  # several cakes typed in the middle of an order
+            if proposal is not None:  # repeat them back; nothing goes into the cart until the customer taps Yes
+                return proposal, COLLECTING, draft
         # The AI's guess is never enough to place an order: only the Confirm button
         # or a clear typed word (CONFIRM_WORDS, handled above) can do that.
 
@@ -704,6 +722,8 @@ class ConversationService:
         if kind == "ORDER_QUOTE":  # "Order these" under a quote: the tap is the confirmation
             return self._add_proposed(lang, draft.get("quote"), base, products, available)
         if kind == "ITEMS_NO":
+            if state == COLLECTING:  # in the middle of an order: nothing was added, so ask the same question again
+                return self._advance(draft, products, available, t(lang, "items_no_mid"))
             return [Reply(text=t(lang, "items_no"), options=self._start_options(lang))], state, draft
         if kind in ("CANCEL_ORDER", "CANCEL_ORDER_YES", "KEEP_ORDER"):  # cancel an order that is already placed
             return self._order_cancel_flow(kind, arg, lang), state, draft

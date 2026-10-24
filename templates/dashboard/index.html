@@ -107,6 +107,8 @@ input.sw:checked::after{transform:translateX(18px);background:var(--ac)}
 .toolbar .grow i{position:absolute;left:13px;top:50%;transform:translateY(-50%);color:var(--mu)}
 .toolbar .grow .fld{padding-left:38px}
 .toolbar .fld.auto{min-width:150px}
+.pager{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;margin-top:8px}
+.pager .pages{display:flex;flex-wrap:wrap;align-items:center;gap:8px}
 
 .wrap{overflow-x:auto;padding:4px 8px 10px;margin:-4px -8px}
 .tr{display:grid;gap:12px;align-items:center;padding:12px 16px;margin-bottom:12px;border-radius:14px;background:var(--bg);box-shadow:var(--raise-s)}
@@ -240,6 +242,10 @@ body .swal2-popup.swal2-toast .swal2-icon .swal2-icon-content i.ti{font-size:16p
             <option value="out_for_delivery">Out for delivery</option>
             <option value="completed">Completed</option><option value="cancelled">Cancelled</option>
           </select>
+          <select id="orderSort" class="fld auto" aria-label="Sort orders">
+            <option value="newest">Newest first</option><option value="oldest">Oldest first</option>
+            <option value="high">Highest total</option><option value="low">Lowest total</option>
+          </select>
           <div class="grow"><i class="ti ti-search" aria-hidden="true"></i><input id="orderSearch" class="fld" type="search" placeholder="Search orders" aria-label="Search orders"></div>
           <button class="btn" id="refresh" type="button"><i class="ti ti-refresh" aria-hidden="true"></i>Refresh</button>
         </div>
@@ -247,6 +253,7 @@ body .swal2-popup.swal2-toast .swal2-icon .swal2-icon-content i.ti{font-size:16p
           <div class="tr head g-orders"><div>#</div><div>Date</div><div>Customer</div><div>Items</div><div>Total</div><div>Delivery / Pick up</div><div>Status</div><div></div></div>
           <div id="orderRows"><div class="empty"><i class="ti ti-loader-2 spin" aria-hidden="true"></i>Loading orders</div></div>
         </div>
+        <nav id="orderPager" class="pager" aria-label="Orders pages"></nav>
       </div>
     </section>
 
@@ -503,11 +510,46 @@ function renderStats() {
     .map(([l, v, ic]) => `<div class="stat"><span class="ic">${I(ic)}</span><div><b>${v}</b><span>${l}</span></div></div>`).join("");
 }
 
+const ORDER_PAGE_SIZE = 10;
+let orderPage = 1;
+// o.date is "YYYY-MM-DD HH:MM" (Philippine time), so comparing the text sorts by time. The id breaks ties.
+const ORDER_SORTS = {
+  newest: (a, b) => b.date.localeCompare(a.date) || b.id - a.id,
+  oldest: (a, b) => a.date.localeCompare(b.date) || a.id - b.id,
+  high: (a, b) => b.total - a.total || b.id - a.id,
+  low: (a, b) => a.total - b.total || b.id - a.id,
+};
+
+function goOrderPage(n) { orderPage = n; renderOrders(); }
+
+function renderOrderPager(total, pages, start, shownCount) {
+  const el = $("orderPager");
+  if (!total) { el.innerHTML = ""; return; }
+  const info = `<span class="muted">Showing ${start + 1}–${start + shownCount} of ${total}</span>`;
+  if (pages < 2) { el.innerHTML = info; return; }
+  const from = Math.max(1, Math.min(orderPage - 2, pages - 4)), to = Math.min(pages, from + 4);
+  const nums = [];
+  for (let n = from; n <= to; n++) {
+    nums.push(`<button type="button" class="btn sm${n === orderPage ? " pri" : ""}" ${n === orderPage ? 'aria-current="page"' : ""} onclick="goOrderPage(${n})">${n}</button>`);
+  }
+  el.innerHTML = info + `<div class="pages">
+    <button type="button" class="btn sm" aria-label="Previous page" ${orderPage === 1 ? "disabled" : ""} onclick="goOrderPage(${orderPage - 1})">${I("chevron-left")}</button>
+    ${nums.join("")}
+    <button type="button" class="btn sm" aria-label="Next page" ${orderPage === pages ? "disabled" : ""} onclick="goOrderPage(${orderPage + 1})">${I("chevron-right")}</button>
+  </div>`;
+}
+
 function renderOrders() {
   const f = $("filter").value, q = $("orderSearch").value.trim().toLowerCase();
   const shown = o => (f === "all" || (f === "active" ? IN_PROGRESS.includes(o.status) : o.status === f)) &&
     (!q || [o.id, o.name, o.phone, o.items].join(" ").toLowerCase().includes(q));
-  $("orderRows").innerHTML = orders.filter(shown).map(o => `
+  // filter() makes a new array, so sorting it never reorders the stats' source list
+  const list = orders.filter(shown).sort(ORDER_SORTS[$("orderSort").value] || ORDER_SORTS.newest);
+  const pages = Math.max(1, Math.ceil(list.length / ORDER_PAGE_SIZE));
+  orderPage = Math.min(Math.max(1, orderPage), pages);  // stay inside the range after a refresh or a status change
+  const start = (orderPage - 1) * ORDER_PAGE_SIZE, pageRows = list.slice(start, start + ORDER_PAGE_SIZE);
+  renderOrderPager(list.length, pages, start, pageRows.length);
+  $("orderRows").innerHTML = pageRows.map(o => `
     <div class="tr g-orders">
       <div class="muted">${o.id}</div>
       <div>${esc(o.date.slice(0, 10))}<small>${esc(o.date.slice(11))}</small></div>
@@ -932,8 +974,9 @@ async function loadInsights() {
     empty("circle-check", "Nothing unanswered.");
 }
 
-$("filter").onchange = renderOrders;
-$("orderSearch").oninput = renderOrders;
+$("filter").onchange = () => goOrderPage(1);
+$("orderSort").onchange = () => goOrderPage(1);
+$("orderSearch").oninput = () => goOrderPage(1);
 $("calPrev").onclick = () => moveMonth(-1);
 $("calNext").onclick = () => moveMonth(1);
 $("calToday").onclick = () => { calMonth = todayPH().slice(0, 7); calSelected = todayPH(); loadCalendar(); };
